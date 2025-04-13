@@ -764,7 +764,7 @@ function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet)
     end
     
     -- 处理正常响应
-    if code == 200 or code == 201 or code == 202 then
+    if code == 200 or code == 201 or code == 202 or code == 204 then  -- 添加 204 No Content 作为成功状态码
         if filepath ~= "" then
             Log:info("File downloaded successfully to", filepath)
             return true
@@ -776,7 +776,11 @@ function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet)
                 Log:debug("Response content:", content)
             end
             
-            if content ~= "" and (string.sub(content, 1,1) == "{" or string.sub(content, 1,1) == "[") then
+            -- 对于 204 No Content 响应，不需要解析 JSON，直接返回成功
+            if code == 204 then
+                Log:debug("Successfully received 204 No Content response")
+                return true
+            elseif content ~= "" and (string.sub(content, 1,1) == "{" or string.sub(content, 1,1) == "[") then
                 local ok, result = pcall(JSON.decode, content)
                 if ok and result then
                     Log:debug("Successfully parsed JSON response")
@@ -789,6 +793,10 @@ function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet)
                         })
                     end
                 end
+            elseif content == "" then
+                -- 空响应但状态码是成功的情况
+                Log:debug("Empty response with successful status code")
+                return true
             else
                 Log:error("Response is not valid JSON")
                 if not quiet then
