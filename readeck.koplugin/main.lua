@@ -41,12 +41,12 @@ local Log = {
     INFO = 2,
     WARN = 3,
     ERROR = 4,
-    level = 4, -- 默认为DEBUG级别
+    level = 4, -- 默认为 ERROR 级别
 }
 
 function Log:debug(...)
     if self.level <= self.DEBUG then
-        logger.dbg("READECK[DEBUG]:", ...)
+        logger.info("READECK[DEBUG]:", ...)
     end
 end
 
