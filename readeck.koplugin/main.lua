@@ -672,8 +672,8 @@ function Readeck:download(article)
     if attr then
         -- 文件已存在，跳过。最好只在本地文件日期比服务器的新时才跳过。
         -- newsdownloader.koplugin 有一个日期解析器，但只有在插件被激活时才可用。
-        if self.is_dateparser_available and article.updated then
-            local server_date = self.dateparser.parse(article.updated)
+        if self.is_dateparser_available and article.created then
+            local server_date = self.dateparser.parse(article.created)
             if server_date < attr.modification then
                 skip_article = true
                 Log:debug("Skipping file (date checked):", local_path)
