@@ -197,9 +197,10 @@ end
 function Readeck:addToMainMenu(menu_items)
     menu_items.readeck = {
         text = _("Readeck"),
+        sorting_hint = "tools",
         sub_item_table = {
             {
-                text = _("Retrieve new articles from server"),
+                text = _("Synchronize articles with server"),
                 callback = function()
                     self.ui:handleEvent(Event:new("SynchronizeReadeck"))
                 end,
@@ -262,7 +263,7 @@ function Readeck:addToMainMenu(menu_items)
                             else
                                 path = filemanagerutil.abbreviate(self.directory)
                             end
-                            return T(_("Set download folder: %1"), BD.dirpath(path))
+                            return T(_("Download folder: %1"), BD.dirpath(path))
                         end,
                         keep_menu_open = true,
                         callback = function(touchmenu_instance)
@@ -278,7 +279,7 @@ function Readeck:addToMainMenu(menu_items)
                             else
                                 filter = self.filter_tag
                             end
-                            return T(_("Filter articles by tag: %1"), filter)
+                            return T(_("Only download articles with tag: %1"), filter)
                         end,
                         keep_menu_open = true,
                         callback = function(touchmenu_instance)
@@ -288,15 +289,15 @@ function Readeck:addToMainMenu(menu_items)
                     {
                         text_func = function()
                             if not self.ignore_tags or self.ignore_tags == "" then
-                                return _("Ignore tags")
+                                return _("Tags to ignore")
                             end
-                            return T(_("Ignore tags (%1)"), self.ignore_tags)
+                            return T(_("Tags to ignore (%1)"), self.ignore_tags)
                         end,
                         keep_menu_open = true,
                         callback = function(touchmenu_instance)
                             self:setTagsDialog(touchmenu_instance,
                                 _("Tags to ignore"),
-                                _("Enter a comma-separated list of tags to ignore."),
+                                _("Enter a comma-separated list of tags to ignore"),
                                 self.ignore_tags,
                                 function(tags)
                                     self.ignore_tags = tags
@@ -307,15 +308,15 @@ function Readeck:addToMainMenu(menu_items)
                     {
                         text_func = function()
                             if not self.auto_tags or self.auto_tags == "" then
-                                return _("Automatic tags")
+                                return _("Tags to add to new articles")
                             end
-                            return T(_("Automatic tags (%1)"), self.auto_tags)
+                            return T(_("Tags to add to new articles (%1)"), self.auto_tags)
                         end,
                         keep_menu_open = true,
                         callback = function(touchmenu_instance)
                             self:setTagsDialog(touchmenu_instance,
-                                _("Tags to automatically add"),
-                                _("Enter a comma-separated list of tags to automatically add to new articles."),
+                                _("Tags to add to new articles"),
+                                _("Enter a comma-separated list of tags to automatically add to new articles"),
                                 self.auto_tags,
                                 function(tags)
                                     self.auto_tags = tags
@@ -408,7 +409,7 @@ function Readeck:addToMainMenu(menu_items)
                         separator = true,
                     },
                     {
-                        text = _("Timeout settings"),
+                        text = _("Set timeout"),
                         keep_menu_open = true,
                         callback = function()
                             self:editTimeoutSettings()
@@ -1078,7 +1079,7 @@ end
 
 function Readeck:setFilterTag(touchmenu_instance)
    self.tag_dialog = InputDialog:new {
-        title =  _("Set a single tag to filter articles on"),
+        title =  _("Enter a single tag to filter articles on"),
         input = self.filter_tag,
         buttons = {
             {
@@ -1362,7 +1363,7 @@ end
 
 function Readeck:editTimeoutSettings()
     self.timeout_settings_dialog = MultiInputDialog:new {
-        title = _("Timeout settings"),
+        title = _("Set timeout"),
         fields = {
             {
                 text = self.block_timeout,
