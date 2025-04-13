@@ -1,0 +1,43 @@
+version: "0.2"
+ignorePaths: []
+dictionaryDefinitions: []
+dictionaries: []
+words:
+  - apiurl
+  - bidi
+  - clach
+  - dateparser
+  - docsettings
+  - documentregistry
+  - downloadmgr
+  - endpos
+  - epub
+  - filemanager
+  - filemanagerutil
+  - FOSS
+  - gsplit
+  - infomessage
+  - inputdialog
+  - koplugin
+  - libkoreader
+  - logcat
+  - luasettings
+  - multiconfirmbox
+  - multiinputdialog
+  - myfields
+  - newsdownloader
+  - occured
+  - optmath
+  - readeck
+  - Readeck
+  - readhistory
+  - reinit
+  - socketutil
+  - Synchronises
+  - tempsettings
+  - touchmenu
+  - uimanager
+  - Wallabag
+  - widgetcontainer
+ignoreWords: []
+import: []
