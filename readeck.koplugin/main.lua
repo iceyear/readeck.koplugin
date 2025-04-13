@@ -116,6 +116,11 @@ function Readeck:init()
     self.username = self.rd_settings.data.readeck.username
     self.password = self.rd_settings.data.readeck.password
     self.directory = self.rd_settings.data.readeck.directory
+    
+    -- 加载缓存的访问令牌和过期时间
+    self.access_token = self.rd_settings.data.readeck.access_token or ""
+    self.token_expiry = self.rd_settings.data.readeck.token_expiry or 0
+    
     if self.rd_settings.data.readeck.is_delete_finished ~= nil then
         self.is_delete_finished = self.rd_settings.data.readeck.is_delete_finished
     end
@@ -492,19 +497,21 @@ function Readeck:getBearerToken()
         self.directory = self.directory .. "/"
     end
 
+    -- 检查是否已有访问令牌并且令牌仍有效
     local now = os.time()
-    if (not isempty(self.auth_token)) and self.token_expiry - now > 300 then
-        -- token still valid for a while, no need to renew
-        Log:debug("Token still valid for", self.token_expiry - now, "seconds")
+    if not isempty(self.access_token) and self.token_expiry > now + 300 then
+        -- 令牌仍有效，无需更新
+        Log:debug("Using cached token, still valid for", self.token_expiry - now, "seconds")
         return true
     end
 
-    -- 如果已经有 token 则直接使用
+    -- 如果已经有 API token 则直接使用
     if not isempty(self.auth_token) then
         Log:info("Using provided API token")
         self.access_token = self.auth_token
         -- 设置一个很长的过期时间，因为API token通常不会过期
         self.token_expiry = now + 365 * 24 * 60 * 60 -- 一年
+        self:saveSettings() -- 保存新的令牌和过期时间
         return true
     end
 
@@ -535,6 +542,8 @@ function Readeck:getBearerToken()
         Log:info("Authentication successful, token received")
         self.access_token = result.token
         self.token_expiry = now + 365 * 24 * 60 * 60  -- 假设token一年有效
+        -- 保存访问令牌和过期时间
+        self:saveSettings()
         return true
     else
         Log:error("Authentication failed")
@@ -1268,6 +1277,8 @@ function Readeck:saveSettings()
         total_timeout         = self.total_timeout,
         file_block_timeout    = self.file_block_timeout,
         file_total_timeout    = self.file_total_timeout,
+        access_token          = self.access_token,
+        token_expiry          = self.token_expiry,
     }
     self.rd_settings:saveSetting("readeck", tempsettings)
     self.rd_settings:flush()
