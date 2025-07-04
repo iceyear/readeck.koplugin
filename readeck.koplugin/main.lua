@@ -87,6 +87,11 @@ end
 function Readeck:init()
     Log:info("Initializing Readeck plugin")
     self.token_expiry = 0
+    -- Initialize cached authentication info
+    self.cached_auth_token = ""
+    self.cached_username = ""
+    self.cached_password = ""
+    self.cached_server_url = ""
     -- default values so that user doesn't have to explicitly set them
     self.is_delete_finished = true
     self.is_delete_read = false
@@ -120,6 +125,11 @@ function Readeck:init()
     -- 加载缓存的访问令牌和过期时间
     self.access_token = self.rd_settings.data.readeck.access_token or ""
     self.token_expiry = self.rd_settings.data.readeck.token_expiry or 0
+    -- 加载用于生成当前 access_token 的认证信息
+    self.cached_auth_token = self.rd_settings.data.readeck.cached_auth_token or ""
+    self.cached_username = self.rd_settings.data.readeck.cached_username or ""
+    self.cached_password = self.rd_settings.data.readeck.cached_password or ""
+    self.cached_server_url = self.rd_settings.data.readeck.cached_server_url or ""
     
     if self.rd_settings.data.readeck.is_delete_finished ~= nil then
         self.is_delete_finished = self.rd_settings.data.readeck.is_delete_finished
@@ -498,12 +508,30 @@ function Readeck:getBearerToken()
         self.directory = self.directory .. "/"
     end
 
-    -- 检查是否已有访问令牌并且令牌仍有效
+    -- 检查是否已有访问令牌并且令牌仍有效，同时验证是否使用相同的认证信息
     local now = os.time()
-    if not isempty(self.access_token) and self.token_expiry > now + 300 then
-        -- 令牌仍有效，无需更新
+    local auth_changed = false
+    
+    -- 检查认证信息是否有变化
+    if not isempty(self.auth_token) then
+        -- 使用 API token 的情况
+        auth_changed = (self.auth_token ~= self.cached_auth_token) or 
+                      (self.server_url ~= self.cached_server_url)
+    else
+        -- 使用用户名密码的情况
+        auth_changed = (self.username ~= self.cached_username) or 
+                      (self.password ~= self.cached_password) or
+                      (self.server_url ~= self.cached_server_url)
+    end
+    
+    if not isempty(self.access_token) and self.token_expiry > now + 300 and not auth_changed then
+        -- 令牌仍有效且认证信息未变化，无需更新
         Log:debug("Using cached token, still valid for", self.token_expiry - now, "seconds")
         return true
+    end
+    
+    if auth_changed then
+        Log:debug("Authentication credentials changed, invalidating cached token")
     end
 
     -- 如果已经有 API token 则直接使用
@@ -512,6 +540,11 @@ function Readeck:getBearerToken()
         self.access_token = self.auth_token
         -- 设置一个很长的过期时间，因为API token通常不会过期
         self.token_expiry = now + 365 * 24 * 60 * 60 -- 一年
+        -- 保存用于生成此 access_token 的认证信息
+        self.cached_auth_token = self.auth_token
+        self.cached_username = ""
+        self.cached_password = ""
+        self.cached_server_url = self.server_url
         self:saveSettings() -- 保存新的令牌和过期时间
         return true
     end
@@ -543,6 +576,11 @@ function Readeck:getBearerToken()
         Log:info("Authentication successful, token received")
         self.access_token = result.token
         self.token_expiry = now + 365 * 24 * 60 * 60  -- 假设token一年有效
+        -- 保存用于生成此 access_token 的认证信息
+        self.cached_auth_token = ""
+        self.cached_username = self.username
+        self.cached_password = self.password
+        self.cached_server_url = self.server_url
         -- 保存访问令牌和过期时间
         self:saveSettings()
         return true
@@ -1288,6 +1326,10 @@ function Readeck:saveSettings()
         file_total_timeout    = self.file_total_timeout,
         access_token          = self.access_token,
         token_expiry          = self.token_expiry,
+        cached_auth_token     = self.cached_auth_token,
+        cached_username       = self.cached_username,
+        cached_password       = self.cached_password,
+        cached_server_url     = self.cached_server_url,
     }
     self.rd_settings:saveSetting("readeck", tempsettings)
     self.rd_settings:flush()
