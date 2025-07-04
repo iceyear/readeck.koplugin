@@ -103,6 +103,15 @@ Or when offline:
 - If articles aren't being processed correctly, ensure the download folder is properly set.
 - Advanced logging with logcat can be enabled in the code for debugging purposes.
 
+### Pikapod Hosting Compatibility
+
+When using Readeck instances hosted on Pikapod:
+
+- The plugin communicates directly with the Readeck API and should work normally
+- If you experience issues with the web interface, these are typically related to the hosting environment's Content Security Policy (CSP)
+- CSP violations in the web interface do not affect the KOReader plugin's functionality
+- Ensure your Pikapod instance is properly configured and accessible via the API endpoints
+
 ## 🙏 Credits
 
 - Based on [wallabag2.koplugin by clach04](https://github.com/clach04/wallabag2.koplugin)

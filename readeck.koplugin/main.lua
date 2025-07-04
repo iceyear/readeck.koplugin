@@ -534,6 +534,7 @@ function Readeck:getBearerToken()
         ["Content-type"] = "application/json",
         ["Accept"] = "application/json, */*",
         ["Content-Length"] = tostring(#bodyJSON),
+        ["User-Agent"] = "KOReader-Readeck-Plugin/1.0",
     }
     
     Log:debug("Sending auth request to", self.server_url .. login_url)
@@ -713,15 +714,28 @@ function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet)
         if headers == nil then
             headers = {
                 ["Authorization"] = "Bearer " .. self.access_token,
+                ["User-Agent"] = "KOReader-Readeck-Plugin/1.0",
             }
+        else
+            -- Ensure User-Agent is always present for API calls
+            if not headers["User-Agent"] and not headers["user-agent"] then
+                headers["User-Agent"] = "KOReader-Readeck-Plugin/1.0"
+            end
         end
     else
         -- regular url link to a foreign server
         local file_url = apiurl
         request.url = file_url
         if headers == nil then
-            -- no need for a token here
-            headers = {}
+            -- no need for a token here, but still identify as KOReader
+            headers = {
+                ["User-Agent"] = "KOReader-Readeck-Plugin/1.0",
+            }
+        else
+            -- Ensure User-Agent is always present for external requests too
+            if not headers["User-Agent"] and not headers["user-agent"] then
+                headers["User-Agent"] = "KOReader-Readeck-Plugin/1.0"
+            end
         end
     end
 
@@ -991,6 +1005,7 @@ function Readeck:addArticle(article_url)
         ["Accept"] = "application/json, */*",
         ["Content-Length"] = tostring(#body_JSON),
         ["Authorization"] = "Bearer " .. self.access_token,
+        ["User-Agent"] = "KOReader-Readeck-Plugin/1.0",
     }
 
     return self:callAPI("POST", "/api/bookmarks", headers, body_JSON, "")  -- 修改添加文章路径，添加 /api 前缀
@@ -1022,6 +1037,7 @@ function Readeck:addTags(path)
                 ["Accept"] = "application/json, */*",
                 ["Content-Length"] = tostring(#bodyJSON),
                 ["Authorization"] = "Bearer " .. self.access_token,
+                ["User-Agent"] = "KOReader-Readeck-Plugin/1.0",
             }
 
             self:callAPI("PATCH", "/api/bookmarks/" .. id, headers, bodyJSON, "")  -- 修改添加标签路径，添加 /api 前缀
@@ -1046,6 +1062,7 @@ function Readeck:removeArticle(path)
                 ["Accept"] = "application/json, */*",
                 ["Content-Length"] = tostring(#bodyJSON),
                 ["Authorization"] = "Bearer " .. self.access_token,
+                ["User-Agent"] = "KOReader-Readeck-Plugin/1.0",
             }
 
             self:callAPI("PATCH", "/api/bookmarks/" .. id, headers, bodyJSON, "")  -- 修改归档文章路径，添加 /api 前缀
