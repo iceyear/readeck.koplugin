@@ -259,26 +259,6 @@ function Readeck:addToMainMenu(menu_items)
                         end,
                     },
                     {
-                        text = _("Reset access token"),
-                        keep_menu_open = true,
-                        callback = function()
-                            self:resetAccessToken()
-                        end,
-                        enabled_func = function()
-                            return not self:isempty(self.access_token)
-                        end,
-                    },
-                    {
-                        text = _("Clear all cached tokens"),
-                        keep_menu_open = true,
-                        callback = function()
-                            self:clearAllTokens()
-                        end,
-                        enabled_func = function()
-                            return not self:isempty(self.access_token)
-                        end,
-                    },
-                    {
                         text = _("Configure Readeck client"),
                         keep_menu_open = true,
                         callback = function()
@@ -435,6 +415,27 @@ function Readeck:addToMainMenu(menu_items)
                         callback = function()
                             self.remove_read_from_history = not self.remove_read_from_history
                             self:saveSettings()
+                        end,
+                        separator = true,
+                    },
+                    {
+                        text = _("Reset access token"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:resetAccessToken()
+                        end,
+                        enabled_func = function()
+                            return not self:isempty(self.access_token)
+                        end,
+                    },
+                    {
+                        text = _("Clear all cached tokens"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:clearAllTokens()
+                        end,
+                        enabled_func = function()
+                            return not self:isempty(self.access_token)
                         end,
                         separator = true,
                     },
