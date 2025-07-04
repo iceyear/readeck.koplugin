@@ -259,6 +259,26 @@ function Readeck:addToMainMenu(menu_items)
                         end,
                     },
                     {
+                        text = _("Reset access token"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:resetAccessToken()
+                        end,
+                        enabled_func = function()
+                            return not self:isempty(self.access_token)
+                        end,
+                    },
+                    {
+                        text = _("Clear all cached tokens"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:clearAllTokens()
+                        end,
+                        enabled_func = function()
+                            return not self:isempty(self.access_token)
+                        end,
+                    },
+                    {
                         text = _("Configure Readeck client"),
                         keep_menu_open = true,
                         callback = function()
@@ -457,17 +477,55 @@ Downloads to folder: %1]]), BD.dirpath(filemanagerutil.abbreviate(self.directory
     }
 end
 
+function Readeck:isempty(s)
+    return s == nil or s == ""
+end
+
+function Readeck:resetAccessToken()
+    Log:info("Manually resetting access token")
+    
+    -- Clear current access token but keep cached credentials for comparison
+    self.access_token = ""
+    self.token_expiry = 0
+    
+    -- Try to get a new token immediately
+    if self:getBearerToken() then
+        UIManager:show(InfoMessage:new{
+            text = _("Access token reset successfully"),
+        })
+    else
+        UIManager:show(InfoMessage:new{
+            text = _("Failed to obtain new access token"),
+        })
+    end
+end
+
+function Readeck:clearAllTokens()
+    Log:info("Clearing all cached tokens and credentials")
+    
+    -- Clear all cached authentication data
+    self.access_token = ""
+    self.token_expiry = 0
+    self.cached_auth_token = ""
+    self.cached_username = ""
+    self.cached_password = ""
+    self.cached_server_url = ""
+    
+    -- Save the cleared state
+    self:saveSettings()
+    
+    UIManager:show(InfoMessage:new{
+        text = _("All cached tokens and credentials cleared"),
+    })
+end
+
 function Readeck:getBearerToken()
     Log:debug("Getting bearer token")
     
     -- Check if the configuration is complete
-    local function isempty(s)
-        return s == nil or s == ""
-    end
-
-    local server_empty = isempty(self.server_url) 
-    local auth_empty = isempty(self.auth_token) and (isempty(self.username) or isempty(self.password))
-    local directory_empty = isempty(self.directory)
+    local server_empty = self:isempty(self.server_url) 
+    local auth_empty = self:isempty(self.auth_token) and (self:isempty(self.username) or self:isempty(self.password))
+    local directory_empty = self:isempty(self.directory)
     
     if server_empty or auth_empty or directory_empty then
         Log:warn("Configuration incomplete - Server:", server_empty and "missing" or "ok", 
@@ -513,7 +571,7 @@ function Readeck:getBearerToken()
     local auth_changed = false
     
     -- 检查认证信息是否有变化
-    if not isempty(self.auth_token) then
+    if not self:isempty(self.auth_token) then
         -- 使用 API token 的情况
         auth_changed = (self.auth_token ~= self.cached_auth_token) or 
                       (self.server_url ~= self.cached_server_url)
@@ -524,7 +582,7 @@ function Readeck:getBearerToken()
                       (self.server_url ~= self.cached_server_url)
     end
     
-    if not isempty(self.access_token) and self.token_expiry > now + 300 and not auth_changed then
+    if not self:isempty(self.access_token) and self.token_expiry > now + 300 and not auth_changed then
         -- 令牌仍有效且认证信息未变化，无需更新
         Log:debug("Using cached token, still valid for", self.token_expiry - now, "seconds")
         return true
@@ -535,7 +593,7 @@ function Readeck:getBearerToken()
     end
 
     -- 如果已经有 API token 则直接使用
-    if not isempty(self.auth_token) then
+    if not self:isempty(self.auth_token) then
         Log:info("Using provided API token")
         self.access_token = self.auth_token
         -- 设置一个很长的过期时间，因为API token通常不会过期
@@ -740,7 +798,7 @@ end
 -- filepath: downloads the file if provided, returns JSON otherwise
 -- @treturn result or (nil, "network_error") or (nil, "json_error")
 -- or (nil, "http_error", code)
-function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet)
+function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet, retry_auth)
     local sink = {}
     local request = {}
 
@@ -799,6 +857,29 @@ function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet)
     else
         Log:error("No response headers received")
         return nil, "network_error"
+    end
+    
+    -- Handle authentication errors - retry with fresh token if possible
+    if (code == 401 or code == 403) and not retry_auth and apiurl:sub(1, 1) == "/" then
+        Log:info("Authentication failed (", code, "), attempting to refresh token")
+        
+        -- Clear current token and try to get a fresh one
+        self.access_token = ""
+        self.token_expiry = 0
+        
+        if self:getBearerToken() then
+            Log:info("Token refreshed, retrying API call")
+            -- Retry the API call with the new token, but mark retry_auth to prevent infinite recursion
+            return self:callAPI(method, apiurl, nil, body, filepath, quiet, true)
+        else
+            Log:error("Failed to refresh token")
+            if not quiet then
+                UIManager:show(InfoMessage:new{
+                    text = _("Authentication failed. Please check your credentials."),
+                })
+            end
+            return nil, "auth_error", code
+        end
     end
     
     -- 处理正常响应
