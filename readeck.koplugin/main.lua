@@ -447,6 +447,18 @@ Downloads to folder: %1]]), BD.dirpath(filemanagerutil.abbreviate(self.directory
     }
 end
 
+-- URL encode special characters in auth tokens
+-- This is needed because some characters like '@' are not valid in HTTP headers
+function Readeck:urlEncodeToken(token)
+    if not token then
+        return token
+    end
+    -- Only encode characters that commonly cause issues in HTTP headers
+    -- Focus on '@' which causes base58 parsing errors
+    local encoded = string.gsub(token, "@", "%%40")
+    return encoded
+end
+
 function Readeck:getBearerToken()
     Log:debug("Getting bearer token")
     
@@ -509,7 +521,7 @@ function Readeck:getBearerToken()
     -- 如果已经有 API token 则直接使用
     if not isempty(self.auth_token) then
         Log:info("Using provided API token")
-        self.access_token = self.auth_token
+        self.access_token = self:urlEncodeToken(self.auth_token)
         -- 设置一个很长的过期时间，因为API token通常不会过期
         self.token_expiry = now + 365 * 24 * 60 * 60 -- 一年
         self:saveSettings() -- 保存新的令牌和过期时间
