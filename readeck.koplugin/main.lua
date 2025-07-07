@@ -106,6 +106,19 @@ function Readeck:init()
     self.auto_tags = ""
     self.articles_per_sync = 30  -- max number of articles to get metadata for
     
+    self.sort_options = {
+        {"created",    _("Added, oldest first")},
+        {"-created",   _("Added, most recent first")},
+        {"published",  _("Published, oldest first")},
+        {"-published", _("Published, most recent first")},
+        {"duration",   _("Duration, shortest first")},
+        {"-duration",  _("Duration, longest first")},
+        {"site",       _("Site name, A to Z")},
+        {"-site",      _("Site name, Z to A")},
+        {"title",      _("Title, A to Z")},
+        {"-title",     _("Title, Z to A")},
+    }
+    
     -- 默认超时设置（秒）
     self.block_timeout = 30
     self.total_timeout = 120
@@ -303,19 +316,13 @@ function Readeck:addToMainMenu(menu_items)
                     },
                     {
                         text_func = function()
-                            local sort_text = {
-                                ["created"] = _("Added, oldest first"),
-                                ["-created"] = _("Added, most recent first"),
-                                ["published"] = _("Published, oldest first"),
-                                ["-published"] = _("Published, most recent first"),
-                                ["duration"] = _("Duration, longest first"),
-                                ["-duration"] = _("Duration, shortest first"),
-                                ["site"] = _("Site name, A to Z"),
-                                ["-site"] = _("Site name, Z to A"),
-                                ["title"] = _("Title, A to Z"),
-                                ["-title"] = _("Title, Z to A"),
-                            }
-                            local sort_desc = sort_text[self.sort_param] or self.sort_param
+                            local sort_desc = self.sort_param
+                            for _, opt in ipairs(self.sort_options) do
+                                if opt[1] == self.sort_param then
+                                    sort_desc = opt[2]
+                                    break
+                                end
+                            end
                             return T(_("Sort articles by: %1"), sort_desc)
                         end,
                         keep_menu_open = true,
@@ -1587,20 +1594,8 @@ end
 
 function Readeck:setSortParam(touchmenu_instance)
     local radio_buttons = {}
-    local sort_options = {
-        {"created",    _("Added, oldest first")},
-        {"-created",   _("Added, most recent first")},
-        {"published",  _("Published, oldest first")},
-        {"-published", _("Published, most recent first")},
-        {"duration",   _("Duration, shortest first")},
-        {"-duration",  _("Duration, longest first")},
-        {"site",       _("Site name, A to Z")},
-        {"-site",      _("Site name, Z to A")},
-        {"title",      _("Title, A to Z")},
-        {"-title",     _("Title, Z to A")},
-    }
 
-    for _, opt in ipairs(sort_options) do
+    for _, opt in ipairs(self.sort_options) do
         local key, value = opt[1], opt[2]
         table.insert(radio_buttons, {
             {text = value, provider = key, checked = (self.sort_param == key)}
