@@ -16,6 +16,7 @@ local FileManager = require("apps/filemanager/filemanager")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
 local JSON = require("json")
+local RadioButtonWidget = require("ui/widget/radiobuttonwidget")
 local LuaSettings = require("frontend/luasettings")
 local Math = require("optmath")
 local MultiConfirmBox = require("ui/widget/multiconfirmbox")
@@ -100,9 +101,23 @@ function Readeck:init()
     self.is_archiving_deleted = true
     self.send_review_as_tags = false
     self.filter_tag = ""
+    self.sort_param = "-created"  -- default to most recent first
     self.ignore_tags = ""
     self.auto_tags = ""
     self.articles_per_sync = 30  -- max number of articles to get metadata for
+    
+    self.sort_options = {
+        {"created",    _("Added, oldest first")},
+        {"-created",   _("Added, most recent first")},
+        {"published",  _("Published, oldest first")},
+        {"-published", _("Published, most recent first")},
+        {"duration",   _("Duration, shortest first")},
+        {"-duration",  _("Duration, longest first")},
+        {"site",       _("Site name, A to Z")},
+        {"-site",      _("Site name, Z to A")},
+        {"title",      _("Title, A to Z")},
+        {"-title",     _("Title, Z to A")},
+    }
     
     -- 默认超时设置（秒）
     self.block_timeout = 30
@@ -151,6 +166,9 @@ function Readeck:init()
     end
     if self.rd_settings.data.readeck.filter_tag then
         self.filter_tag = self.rd_settings.data.readeck.filter_tag
+    end
+    if self.rd_settings.data.readeck.sort_param then
+        self.sort_param = self.rd_settings.data.readeck.sort_param
     end
     if self.rd_settings.data.readeck.ignore_tags then
         self.ignore_tags = self.rd_settings.data.readeck.ignore_tags
@@ -294,6 +312,22 @@ function Readeck:addToMainMenu(menu_items)
                         keep_menu_open = true,
                         callback = function(touchmenu_instance)
                             self:setFilterTag(touchmenu_instance)
+                        end,
+                    },
+                    {
+                        text_func = function()
+                            local sort_desc = self.sort_param
+                            for _, opt in ipairs(self.sort_options) do
+                                if opt[1] == self.sort_param then
+                                    sort_desc = opt[2]
+                                    break
+                                end
+                            end
+                            return T(_("Sort articles by: %1"), sort_desc)
+                        end,
+                        keep_menu_open = true,
+                        callback = function(touchmenu_instance)
+                            self:setSortParam(touchmenu_instance)
                         end,
                     },
                     {
@@ -662,6 +696,11 @@ function Readeck:getArticleList()
         filtering = "&labels=" .. self.filter_tag
     end
 
+    local sorting = ""
+    if self.sort_param ~= "" then
+        sorting = "&sort=" .. self.sort_param
+    end
+
     local article_list = {}
     local offset = 0
     local limit = math.min(self.articles_per_sync, 30)  -- 服务器默认每页数量是30
@@ -672,7 +711,9 @@ function Readeck:getArticleList()
         local articles_url = "/api/bookmarks?limit=" .. limit  -- 修改文章列表路径，添加 /api 前缀
                           .. "&offset=" .. offset
                           .. "&is_archived=0"  -- 只获取未归档的文章
+                          .. "&type=article" -- No sense downloading videos, but maybe photos
                           .. filtering
+                          .. sorting
 
         Log:debug("Fetching article list with URL:", articles_url)
         local articles_json, err, code = self:callAPI("GET", articles_url, nil, "", "", true)
@@ -1390,6 +1431,7 @@ function Readeck:saveSettings()
         password              = self.password,
         directory             = self.directory,
         filter_tag            = self.filter_tag,
+        sort_param            = self.sort_param,
         ignore_tags           = self.ignore_tags,
         auto_tags             = self.auto_tags,
         is_delete_finished    = self.is_delete_finished,
@@ -1548,6 +1590,33 @@ function Readeck:editTimeoutSettings()
     }
     UIManager:show(self.timeout_settings_dialog)
     self.timeout_settings_dialog:onShowKeyboard()
+end
+
+function Readeck:setSortParam(touchmenu_instance)
+    local radio_buttons = {}
+
+    for _, opt in ipairs(self.sort_options) do
+        local key, value = opt[1], opt[2]
+        table.insert(radio_buttons, {
+            {text = value, provider = key, checked = (self.sort_param == key)}
+        })
+    end
+
+    UIManager:show(RadioButtonWidget:new{
+        title_text = _("Sort articles by"),
+        cancel_text = _("Cancel"),
+        ok_text = _("Apply"),
+        radio_buttons = radio_buttons,
+        callback = function(radio)
+            if radio then
+                self.sort_param = radio.provider
+                self:saveSettings()
+                if touchmenu_instance then
+                    touchmenu_instance:updateItems()
+                end
+            end
+        end,
+    })
 end
 
 return Readeck
