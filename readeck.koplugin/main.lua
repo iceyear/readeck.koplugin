@@ -73,8 +73,8 @@ end
 Log.level = Log.DEBUG -- 可以通过设置 Log.level 的值来调整日志级别
 
 -- constants
-local article_id_prefix = "[rd-id_"
-local article_id_postfix = "] "
+local article_id_suffix = " [rd-id_"
+local article_id_postfix = "]"
 local failed, skipped, downloaded = 1, 2, 3
 
 local Readeck = WidgetContainer:extend{
@@ -802,7 +802,7 @@ function Readeck:download(article)
     local file_ext = ".epub"
     local item_url = "/api/bookmarks/" .. article.id .. "/article.epub"  -- 修改下载路径，添加 /api 前缀
 
-    local local_path = self.directory .. article_id_prefix .. article.id .. article_id_postfix .. title .. file_ext
+    local local_path = self.directory .. title .. article_id_suffix .. article.id .. article_id_postfix .. file_ext
     Log:debug("DOWNLOAD: id:", article.id)
     Log:debug("DOWNLOAD: title:", article.title)
     Log:debug("DOWNLOAD: filename:", local_path)
@@ -1224,20 +1224,22 @@ function Readeck:deleteLocalArticle(path)
 end
 
 function Readeck:getArticleID(path)
-    -- extract the Readeck ID from the file name
-    local offset = self.directory:len() + 2 -- skip / and advance to the next char
-    local prefix_len = article_id_prefix:len()
-    if path:sub(offset , offset + prefix_len - 1) ~= article_id_prefix then
-        Log:warn("getArticleID: no match!", path:sub(offset , offset + prefix_len - 1))
-        return
+    -- 1. Find the starting position of the prefix
+    local start_pos = path:find(article_id_suffix, 1, true) -- `true` disables pattern matching
+    if not start_pos then
+        return -- Suffix not found
     end
-    local endpos = path:find(article_id_postfix, offset + prefix_len)
-    if endpos == nil then
-        Log:warn("getArticleID: no match!")
-        return
+
+    -- 2. Find the ending position of the postfix, starting after the prefix
+    local end_pos = path:find(article_id_postfix, start_pos)
+    if not end_pos then
+        return -- Postfix not found
     end
-    local id = path:sub(offset + prefix_len, endpos - 1)
-    return id
+
+    -- 3. Extract the ID from between the markers
+    local id_start = start_pos + article_id_suffix:len()
+    local id_end = end_pos - 1
+    return path:sub(id_start, id_end)
 end
 
 function Readeck:refreshCurrentDirIfNeeded()
