@@ -1227,7 +1227,7 @@ function Readeck:getArticleID(path)
     -- 1. Find the starting position of the prefix
     local start_pos = path:find(article_id_suffix, 1, true) -- `true` disables pattern matching
     if not start_pos then
-        return -- Prefix not found
+        return -- Suffix not found
     end
 
     -- 2. Find the ending position of the postfix, starting after the prefix
