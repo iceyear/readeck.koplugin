@@ -73,8 +73,8 @@ end
 Log.level = Log.DEBUG -- 可以通过设置 Log.level 的值来调整日志级别
 
 -- constants
-local article_id_prefix = "[rd-id_"
-local article_id_postfix = "] "
+local article_id_prefix = " [rd-id_"
+local article_id_postfix = "]"
 local failed, skipped, downloaded = 1, 2, 3
 
 local Readeck = WidgetContainer:extend{
@@ -802,7 +802,7 @@ function Readeck:download(article)
     local file_ext = ".epub"
     local item_url = "/api/bookmarks/" .. article.id .. "/article.epub"  -- 修改下载路径，添加 /api 前缀
 
-    local local_path = self.directory .. article_id_prefix .. article.id .. article_id_postfix .. title .. file_ext
+    local local_path = self.directory .. title .. article_id_prefix .. article.id .. article_id_postfix .. file_ext
     Log:debug("DOWNLOAD: id:", article.id)
     Log:debug("DOWNLOAD: title:", article.title)
     Log:debug("DOWNLOAD: filename:", local_path)
@@ -1225,19 +1225,39 @@ end
 
 function Readeck:getArticleID(path)
     -- extract the Readeck ID from the file name
-    local offset = self.directory:len() + 2 -- skip / and advance to the next char
-    local prefix_len = article_id_prefix:len()
-    if path:sub(offset , offset + prefix_len - 1) ~= article_id_prefix then
-        Log:warn("getArticleID: no match!", path:sub(offset , offset + prefix_len - 1))
+    local filename = path:match("[^/]+$")  -- get just the filename without directory path
+    if not filename then
+        Log:warn("getArticleID: invalid path!", path)
         return
     end
-    local endpos = path:find(article_id_postfix, offset + prefix_len)
-    if endpos == nil then
-        Log:warn("getArticleID: no match!")
-        return
+    
+    -- Try new format first: "Article Title [rd-id_123].epub"
+    local new_prefix = " [rd-id_"
+    local new_postfix = "]"
+    local start_pos = filename:find(new_prefix, 1, true)
+    if start_pos then
+        local end_pos = filename:find(new_postfix, start_pos + #new_prefix, true)
+        if end_pos then
+            local id = filename:sub(start_pos + #new_prefix, end_pos - 1)
+            Log:debug("getArticleID: found new format ID:", id)
+            return id
+        end
     end
-    local id = path:sub(offset + prefix_len, endpos - 1)
-    return id
+    
+    -- Fall back to old format for backward compatibility: "[rd-id_123] Article Title.epub"
+    local old_prefix = "[rd-id_"
+    local old_postfix = "] "
+    if filename:sub(1, #old_prefix) == old_prefix then
+        local end_pos = filename:find(old_postfix, #old_prefix + 1, true)
+        if end_pos then
+            local id = filename:sub(#old_prefix + 1, end_pos - 1)
+            Log:debug("getArticleID: found old format ID:", id)
+            return id
+        end
+    end
+    
+    Log:warn("getArticleID: no match found in filename:", filename)
+    return
 end
 
 function Readeck:refreshCurrentDirIfNeeded()
