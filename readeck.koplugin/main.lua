@@ -809,36 +809,25 @@ function Readeck:download(article)
 
     local attr = lfs.attributes(local_path)
     if attr then
-        -- 文件已存在，跳过。最好只在本地文件日期比服务器的新时才跳过。
-        -- newsdownloader.koplugin 有一个日期解析器，但只有在插件被激活时才可用。
-        if self.is_dateparser_available and article.created then
-            local server_date = self.dateparser.parse(article.created)
-            if server_date <= attr.modification then
-                skip_article = true
-                Log:debug("Skipping file (date checked):", local_path)
-            end
-        else
-            skip_article = true
-            Log:debug("Skipping file:", local_path)
-        end
+       -- File exists. Since Readeck articles are immutable, there's no need to
+       -- fetch the article again.
+       Log:debug("Skipping existing article:", article.id)
+       return skipped
     end
 
-    if skip_article == false then
-        if self:callAPI("GET", item_url, nil, "", local_path) then
-            -- Set file modification time to match article creation time.
-            if self.is_dateparser_available and article.created then
-                local server_date = self.dateparser.parse(article.created)
-                if server_date then
-                    lfs.touch(local_path, server_date)
-                    Log:debug("Set file timestamp to:", server_date, "for:", local_path)
-                end
-            end
-            return downloaded
-        else
-            return failed
-        end
+    if self:callAPI("GET", item_url, nil, "", local_path) then
+       -- Set file modification time to match article creation time.
+       if self.is_dateparser_available and article.created then
+          local server_date = self.dateparser.parse(article.created)
+          if server_date then
+             lfs.touch(local_path, server_date)
+             Log:debug("Set file timestamp to:", server_date, "for:", local_path)
+          end
+       end
+       return downloaded
+    else
+       return failed
     end
-    return skipped
 end
 
 -- method: (mandatory) GET, POST, DELETE, PATCH, etc...
