@@ -234,6 +234,15 @@ function Readeck:addToMainMenu(menu_items)
                 end,
             },
             {
+                text = _("Export highlights to server"),
+                callback = function()
+                    NetworkMgr:runWhenOnline(function() self:exportHighlights() end)
+                end,
+                enabled_func = function()
+                    return self.ui.document ~= nil
+                end,
+            },
+            {
                 text = _("Delete finished articles remotely"),
                 callback = function()
                     local connect_callback = function()
@@ -1535,6 +1544,201 @@ function Readeck:onCloseDocument()
             self.ui:setLastDirForFileBrowser(self.directory)
         end
     end
+end
+
+-- Helper functions for highlight export
+local function _clean_highlight_selector(selector)
+    if not selector then return "" end
+    -- Removes KOReader-specific prefixes from the XPath
+    return selector:gsub("/body/DocFragment/body/main/", ""):gsub("/text%(%)$", "")
+end
+
+local function _normalize_highlight_selector(selector)
+    if not selector then return "" end
+
+    -- Canonicalize XPath by adding [1] to segments without predicates.
+    -- e.g., "section/p[2]" becomes "section[1]/p[2]".
+    -- This makes server selectors ("section/p[2]") comparable to
+    -- client selectors ("section[1]/p[2]").
+    local parts = {}
+    for part in util.gsplit(selector, "/") do
+        if part ~= "" then
+            -- Add [1] if it's a tag without a predicate
+            if not part:find("%[") then
+                part = part .. "[1]"
+            end
+            table.insert(parts, part)
+        end
+    end
+    local canonical_selector = table.concat(parts, "/")
+
+    -- Pad numbers in XPath indices with zeros for correct lexicographical sorting
+    return canonical_selector:gsub("%[(%d+)%]", function(d)
+        return string.format("[%05d]", tonumber(d))
+    end)
+end
+
+local function _compare_highlight_points(s1, o1, s2, o2)
+    local norm_s1 = _normalize_highlight_selector(s1)
+    local norm_s2 = _normalize_highlight_selector(s2)
+
+    if norm_s1 < norm_s2 then return -1 end
+    if norm_s1 > norm_s2 then return 1 end
+
+    -- selectors are effectively equal, compare offsets
+    if o1 < o2 then return -1 end
+    if o1 > o2 then return 1 end
+    return 0
+end
+
+local function _highlights_overlap(h1, h2)
+    -- h1 is the local highlight (start/end points are pre-ordered).
+    -- h2 is the remote highlight.
+
+    -- Defensive check for malformed highlight objects from the server
+    if not (h2 and h2.start_selector and h2.end_selector and h2.start_offset and h2.end_offset) then
+        Log:warn("Cannot compare with an incomplete remote highlight object. Assuming no overlap.")
+        return false
+    end
+
+    -- Clean and order points for the remote highlight (h2)
+    local h2_start_s, h2_start_o, h2_end_s, h2_end_o
+    local clean_s1, clean_s2 = _clean_highlight_selector(h2.start_selector), _clean_highlight_selector(h2.end_selector)
+    if _compare_highlight_points(clean_s1, h2.start_offset, clean_s2, h2.end_offset) <= 0 then
+        h2_start_s, h2_start_o, h2_end_s, h2_end_o = clean_s1, h2.start_offset, clean_s2, h2.end_offset
+    else
+        h2_start_s, h2_start_o, h2_end_s, h2_end_o = clean_s2, h2.end_offset, clean_s1, h2.start_offset
+    end
+
+    -- Overlap check: start1 < end2 AND start2 < end1
+    local start1_before_end2 = _compare_highlight_points(h1.start_selector, h1.start_offset, h2_end_s, h2_end_o) < 0
+    local start2_before_end1 = _compare_highlight_points(h2_start_s, h2_start_o, h1.end_selector, h1.end_offset) < 0
+
+    return start1_before_end2 and start2_before_end1
+end
+
+local ALLOWED_HIGHLIGHT_COLORS = { red = true, green = true, blue = true, yellow = true }
+local function _build_highlight_payload(h)
+    -- We are only interested in highlights, not other kinds of annotations.
+    if not h.drawer then return nil end
+
+    local start_selector, start_offset = h.pos0:match("(.*)%.(%d+)")
+    local end_selector, end_offset = h.pos1:match("(.*)%.(%d+)")
+
+    if not (start_selector and start_offset and end_selector and end_offset) then return nil end
+
+    local s_offset = tonumber(start_offset)
+    local e_offset = tonumber(end_offset)
+
+    start_selector = _clean_highlight_selector(start_selector)
+    end_selector = _clean_highlight_selector(end_selector)
+
+    -- Ensure start point is before end point for comparison logic
+    if _compare_highlight_points(start_selector, s_offset, end_selector, e_offset) > 0 then
+        start_selector, end_selector = end_selector, start_selector
+        s_offset, e_offset = e_offset, s_offset
+    end
+
+    local color = (h.color and ALLOWED_HIGHLIGHT_COLORS[h.color]) and h.color or "yellow"
+
+    return { text = h.text, color = color, start_selector = start_selector, start_offset = s_offset, end_selector = end_selector, end_offset = e_offset }
+end
+
+function Readeck:exportHighlights()
+    local document = self.ui.document
+    if not document then
+        UIManager:show(InfoMessage:new{ text = _("No document opened.") })
+        return
+    end
+
+    local article_id = self:getArticleID(document.file)
+    if not article_id then
+        UIManager:show(InfoMessage:new{ text = _("Could not find Readeck article ID for this document.") })
+        return
+    end
+
+    if self:getBearerToken() == false then
+        return false
+    end
+
+    -- Fetch existing highlights to check for overlaps
+    local existing_highlights_raw, err = self:callAPI("GET", "/api/bookmarks/" .. article_id .. "/annotations", nil, "", "", true)
+    local existing_highlights = {}
+    if err then
+        UIManager:show(InfoMessage:new{ text = _("Could not fetch existing highlights from Readeck. Aborting export.") })
+        return
+    end
+    if existing_highlights_raw and type(existing_highlights_raw) == "table" then
+        existing_highlights = existing_highlights_raw
+    end
+
+    -- The highlights are in the annotation module of the reader UI.
+    local highlights = self.ui.view.ui.annotation.annotations
+
+    if not highlights or not next(highlights) then
+        UIManager:show(InfoMessage:new{ text = _("No highlights found in this document.") })
+        return
+    end
+
+    local success_count = 0
+    local error_count = 0
+    local skipped_count = 0
+
+    for _, h in pairs(highlights) do
+        local local_highlight = _build_highlight_payload(h)
+
+        if local_highlight then
+            local is_overlapping = false
+            for _, remote_h in ipairs(existing_highlights) do
+                if _highlights_overlap(local_highlight, remote_h) then
+                    is_overlapping = true
+                    break
+                end
+            end
+
+            if is_overlapping then
+                skipped_count = skipped_count + 1
+                Log:info("Skipping overlapping highlight:", local_highlight.text)
+            else
+                local bodyJSON = JSON.encode(local_highlight)
+                Log:debug("Start selector:", local_highlight.start_selector, "End selector:", local_highlight.end_selector)
+                local headers = {
+                    ["Content-type"] = "application/json",
+                    ["Accept"] = "application/json, */*",
+                    ["Content-Length"] = tostring(#bodyJSON),
+                    ["Authorization"] = "Bearer " .. self.access_token,
+                }
+
+                local result = self:callAPI("POST", "/api/bookmarks/" .. article_id .. "/annotations", headers, bodyJSON, "")
+                if result then
+                    success_count = success_count + 1
+                    -- Add to existing highlights to prevent sending another local highlight that overlaps with this new one.
+                    table.insert(existing_highlights, local_highlight)
+                else
+                    error_count = error_count + 1
+                end
+            end
+        end
+    end
+
+    local message_parts = {}
+    if success_count > 0 then
+        table.insert(message_parts, T(_("Success: %1"), success_count))
+    end
+    if error_count > 0 then
+        table.insert(message_parts, T(_("Failed: %1"), error_count))
+    end
+    if skipped_count > 0 then
+        table.insert(message_parts, T(_("Skipped (overlap): %1"), skipped_count))
+    end
+
+    local message
+    if #message_parts > 0 then
+        message = T(_("Finished exporting highlights.\n%1"), table.concat(message_parts, "\n"))
+    else
+        message = _("Finished exporting highlights. No new highlights to export.")
+    end
+    UIManager:show(InfoMessage:new{ text = message })
 end
 
 function Readeck:editTimeoutSettings()
