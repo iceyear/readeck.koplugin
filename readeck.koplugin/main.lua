@@ -818,25 +818,28 @@ function Readeck:download(article)
 
     local attr = lfs.attributes(local_path)
     if attr then
-       -- File exists. Since Readeck articles are immutable, there's no need to
-       -- fetch the article again.
-       Log:debug("Skipping existing article:", article.id)
-       return skipped
+        -- 文件已存在，跳过。最好只在本地文件日期比服务器的新时才跳过。
+        -- newsdownloader.koplugin 有一个日期解析器，但只有在插件被激活时才可用。
+        if self.is_dateparser_available and article.created then
+            local server_date = self.dateparser.parse(article.created)
+            if server_date < attr.modification then
+                skip_article = true
+                Log:debug("Skipping file (date checked):", local_path)
+            end
+        else
+            skip_article = true
+            Log:debug("Skipping file:", local_path)
+        end
     end
 
-    if self:callAPI("GET", item_url, nil, "", local_path) then
-       -- Set file modification time to match article creation time.
-       if self.is_dateparser_available and article.created then
-          local server_date = self.dateparser.parse(article.created)
-          if server_date then
-             lfs.touch(local_path, server_date)
-             Log:debug("Set file timestamp to:", server_date, "for:", local_path)
-          end
-       end
-       return downloaded
-    else
-       return failed
+    if skip_article == false then
+        if self:callAPI("GET", item_url, nil, "", local_path) then
+            return downloaded
+        else
+            return failed
+        end
     end
+    return skipped
 end
 
 -- method: (mandatory) GET, POST, DELETE, PATCH, etc...
@@ -1115,12 +1118,15 @@ function Readeck:processLocalFiles(mode)
                     local percent_finished = doc_settings:readSetting("percent_finished")
                     if status == "complete" or status == "abandoned" then
                         if self.is_delete_finished then
-                            self:removeArticle(entry_path)
+                            -- If we're archiving, optionally also mark as fully read on the server.
+                            -- "complete" typically implies finished reading; "abandoned" does not.
+                            local mark_read_complete = (status == "complete") or (percent_finished == 1)
+                            self:removeArticle(entry_path, mark_read_complete)
                             num_deleted = num_deleted + 1
                         end
                     elseif percent_finished == 1 then -- 100% read
                         if self.is_delete_read then
-                            self:removeArticle(entry_path)
+                            self:removeArticle(entry_path, true)
                             num_deleted = num_deleted + 1
                         end
                     end
@@ -1198,7 +1204,9 @@ function Readeck:addTags(path)
     end
 end
 
-function Readeck:removeArticle(path)
+-- Remove (or archive) an article remotely and delete it locally.
+-- If mark_read_complete is true and we're archiving, also set read_progress=100 on the server.
+function Readeck:removeArticle(path, mark_read_complete)
     Log:debug("Removing article", path)
     local id = self:getArticleID(path)
     if id then
@@ -1206,6 +1214,9 @@ function Readeck:removeArticle(path)
             local body = {
                 is_archived = true
             }
+            if mark_read_complete then
+                body.read_progress = 100
+            end
             local bodyJSON = JSON.encode(body)
 
             local headers = {
