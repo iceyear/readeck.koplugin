@@ -1118,12 +1118,15 @@ function Readeck:processLocalFiles(mode)
                     local percent_finished = doc_settings:readSetting("percent_finished")
                     if status == "complete" or status == "abandoned" then
                         if self.is_delete_finished then
-                            self:removeArticle(entry_path)
+                            -- If we're archiving, optionally also mark as fully read on the server.
+                            -- "complete" typically implies finished reading; "abandoned" does not.
+                            local mark_read_complete = (status == "complete") or (percent_finished == 1)
+                            self:removeArticle(entry_path, mark_read_complete)
                             num_deleted = num_deleted + 1
                         end
                     elseif percent_finished == 1 then -- 100% read
                         if self.is_delete_read then
-                            self:removeArticle(entry_path)
+                            self:removeArticle(entry_path, true)
                             num_deleted = num_deleted + 1
                         end
                     end
@@ -1201,7 +1204,9 @@ function Readeck:addTags(path)
     end
 end
 
-function Readeck:removeArticle(path)
+-- Remove (or archive) an article remotely and delete it locally.
+-- If mark_read_complete is true and we're archiving, also set read_progress=100 on the server.
+function Readeck:removeArticle(path, mark_read_complete)
     Log:debug("Removing article", path)
     local id = self:getArticleID(path)
     if id then
@@ -1209,6 +1214,9 @@ function Readeck:removeArticle(path)
             local body = {
                 is_archived = true
             }
+            if mark_read_complete then
+                body.read_progress = 100
+            end
             local bodyJSON = JSON.encode(body)
 
             local headers = {
