@@ -1217,6 +1217,12 @@ function Readeck:removeArticle(path, mark_read_complete)
             if mark_read_complete then
                 body.read_progress = 100
             end
+            -- if rated 5 stars, favourite article in Readeck
+            local doc_settings = DocSettings:open(path)
+            local summary = doc_settings:readSetting("summary")
+            if summary and summary.rating == 5 then
+                body.is_marked = true
+            end
             local bodyJSON = JSON.encode(body)
 
             local headers = {
