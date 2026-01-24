@@ -194,6 +194,8 @@ function Readeck:init()
     end
     self.remove_finished_from_history = self.rd_settings.data.readeck.remove_finished_from_history or false
     self.download_queue = self.rd_settings.data.readeck.download_queue or {}
+    self.sync_star_status = self.rd_settings.data.readeck.sync_star_status or false
+    self.remote_star_threshold= self.rd_settings.data.readeck.remote_star_threshold or 5
 
     -- workaround for dateparser only available if newsdownloader is active
     self.is_dateparser_available = false
@@ -425,6 +427,49 @@ function Readeck:addToMainMenu(menu_items)
                                 end,
                             },
                         },
+                    },
+                    {
+                        text = _("Use star rating to “like” and label entries in Readeck"),
+                        help_text = _("Mark entries as starred/favourited/liked on the server upon sync, if they're rated above your chosen star threshold in the book status page, and label them N-stars"),
+                        keep_menu_open = true,
+                        checked_func = function() return self.sync_star_status end,
+                        callback = function()
+                            self.sync_star_status = not self.sync_star_status
+                            self:saveSettings()
+                        end,
+                    },
+                    {
+                        text_func = function()
+                            return T(_("“Like” entries in Readeck if rated: %1+"), self.remote_star_threshold)
+                        end,
+                        keep_menu_open = true,
+                        callback = function(touchmenu_instance)
+                            self.remote_star_threshold_dialog = InputDialog:new{
+                                title = _("Add to favorites rating threshold"),
+                                input = tostring(self.remote_star_threshold),
+                                buttons = {
+                                    {
+                                        {
+                                            text = _("Cancel"),
+                                            id = "close",
+                                            callback = function()
+                                                UIManager:close(self.remote_star_threshold_dialog)
+                                            end,
+                                        },
+                                        {
+                                            text = _("Apply"),
+                                            callback = function()
+                                                self.remote_star_threshold = math.max(1, tonumber(self.remote_star_threshold_dialog:getInputText()) or self.remote_star_threshold)
+                                                self:saveSettings()
+                                                touchmenu_instance:updateItems()
+                                                UIManager:close(self.remote_star_threshold_dialog)
+                                            end,
+                                        }
+                                    }
+                                }
+                            }
+                        UIManager:show(self.remote_star_threshold_dialog)
+                        end,
                     },
                     {
                         text = _("Send review as tags"),
@@ -1217,11 +1262,18 @@ function Readeck:removeArticle(path, mark_read_complete)
             if mark_read_complete then
                 body.read_progress = 100
             end
-            -- if rated 5 stars, favourite article in Readeck
-            local doc_settings = DocSettings:open(path)
-            local summary = doc_settings:readSetting("summary")
-            if summary and summary.rating == 5 then
-                body.is_marked = true
+            if self.sync_star_status then
+                local doc_settings = DocSettings:open(path)
+                local summary = doc_settings:readSetting("summary")
+                if summary and summary.rating then
+                    if summary.rating > 0 then
+                        local label = {summary.rating.."-star"}
+                        body.add_labels = label
+                    end
+                    if summary.rating >= self.remote_star_threshold then
+                        body.is_marked = true
+                    end
+                end
             end
             local bodyJSON = JSON.encode(body)
 
@@ -1479,6 +1531,8 @@ function Readeck:saveSettings()
         cached_username       = self.cached_username,
         cached_password       = self.cached_password,
         cached_server_url     = self.cached_server_url,
+        sync_star_status = self.sync_star_status,
+        remote_star_threshold= self.remote_star_threshold,
     }
     self.rd_settings:saveSetting("readeck", tempsettings)
     self.rd_settings:flush()
