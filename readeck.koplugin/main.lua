@@ -15,6 +15,7 @@ local FFIUtil = require("ffi/util")
 local FileManager = require("apps/filemanager/filemanager")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
+local ButtonDialog= require("ui/widget/buttondialog")
 local JSON = require("json")
 local RadioButtonWidget = require("ui/widget/radiobuttonwidget")
 local LuaSettings = require("frontend/luasettings")
@@ -105,7 +106,6 @@ function Readeck:init()
     self.ignore_tags = ""
     self.auto_tags = ""
     self.articles_per_sync = 30  -- max number of articles to get metadata for
-    
     self.sort_options = {
         {"created",    _("Added, oldest first")},
         {"-created",   _("Added, most recent first")},
@@ -196,6 +196,7 @@ function Readeck:init()
     self.download_queue = self.rd_settings.data.readeck.download_queue or {}
     self.sync_star_status = self.rd_settings.data.readeck.sync_star_status or false
     self.remote_star_threshold= self.rd_settings.data.readeck.remote_star_threshold or 5
+    self.sync_star_rating_as_label = self.rd_settings.data.readeck.sync_star_rating_as_label or false
 
     -- workaround for dateparser only available if newsdownloader is active
     self.is_dateparser_available = false
@@ -429,46 +430,106 @@ function Readeck:addToMainMenu(menu_items)
                         },
                     },
                     {
-                        text = _("Use star rating to “like” and label entries in Readeck"),
-                        help_text = _("Mark entries as starred/favourited/liked on the server upon sync, if they're rated above your chosen star threshold in the book status page, and label them N-stars"),
-                        keep_menu_open = true,
-                        checked_func = function() return self.sync_star_status end,
-                        callback = function()
-                            self.sync_star_status = not self.sync_star_status
-                            self:saveSettings()
-                        end,
-                    },
-                    {
                         text_func = function()
-                            return T(_("“Like” entries in Readeck if rated: %1+"), self.remote_star_threshold)
+                            local stars = {}
+                            stars[0] = ": disabled"
+                            for i = 1, 5 do
+                                stars[i] = "if ⩾ "..string.rep("★", i)..""
+                            end
+                            return T(_("“Like” entries in Readeck %1"), stars[self.remote_star_threshold])
                         end,
+                        help_text = _("Mark entries as starred/favourited/liked on the server upon sync, if they're rated above your chosen star threshold in the book status page."),
                         keep_menu_open = true,
                         callback = function(touchmenu_instance)
-                            self.remote_star_threshold_dialog = InputDialog:new{
-                                title = _("Add to favorites rating threshold"),
-                                input = tostring(self.remote_star_threshold),
+                            self.buttondlg = ButtonDialog:new{
+                                title = "Threshold",
+                                title_align = "center",
+                                -- shrink_unneeded_width = true,
+                                width_factor = 0.33,
                                 buttons = {
-                                    {
-                                        {
-                                            text = _("Cancel"),
-                                            id = "close",
+                                       { {
+                                            text = _("★★★★★"),
+                                            align = "left",
                                             callback = function()
-                                                UIManager:close(self.remote_star_threshold_dialog)
-                                            end,
-                                        },
-                                        {
-                                            text = _("Apply"),
-                                            callback = function()
-                                                self.remote_star_threshold = math.max(1, tonumber(self.remote_star_threshold_dialog:getInputText()) or self.remote_star_threshold)
+                                                self.sync_star_status = true
+                                                self.remote_star_threshold = 5
                                                 self:saveSettings()
                                                 touchmenu_instance:updateItems()
-                                                UIManager:close(self.remote_star_threshold_dialog)
+                                                UIManager:close(self.buttondlg)
                                             end,
-                                        }
+                                        }},
+                                       { {
+                                            text = _("★★★★"),
+                                            align = "left",
+                                            callback = function()
+                                                self.sync_star_status = true
+                                                self.remote_star_threshold = 4
+                                                self:saveSettings()
+                                                touchmenu_instance:updateItems()
+                                                UIManager:close(self.buttondlg)
+                                            end,
+                                        }},
+                                       { {
+                                            text = _("★★★"),
+                                            align = "left",
+                                            callback = function()
+                                                self.sync_star_status = true
+                                                self.remote_star_threshold = 3
+                                                self:saveSettings()
+                                                touchmenu_instance:updateItems()
+                                                UIManager:close(self.buttondlg)
+                                            end,
+                                        }},
+                                       { {
+                                            text = _("★★"),
+                                            align = "left",
+                                            callback = function()
+                                                self.sync_star_status = true
+                                                self.remote_star_threshold = 2
+                                                self:saveSettings()
+                                                touchmenu_instance:updateItems()
+                                                UIManager:close(self.buttondlg)
+                                            end,
+
+                                        }},
+                                        {{
+                                            text = _("★"),
+                                            align = "left",
+                                            callback = function()
+                                                self.sync_star_status = true
+                                                self.remote_star_threshold = 1
+                                                self:saveSettings()
+                                                touchmenu_instance:updateItems()
+                                                UIManager:close(self.buttondlg)
+                                            end,
+
+                                        }},
+                                        {{
+                                            text_func = function()
+                                                return T(_("Disable"), self.remote_star_threshold)
+                                            end,
+                                            align = "left",
+                                            callback = function()
+                                                self.sync_star_status = false
+                                                self.remote_star_threshold = 0
+                                                self:saveSettings()
+                                                touchmenu_instance:updateItems()
+                                                UIManager:close(self.buttondlg)
+                                            end,
+                                        }}
                                     }
-                                }
-                            }
-                        UIManager:show(self.remote_star_threshold_dialog)
+                               } 
+                                UIManager:show(self.buttondlg)
+                            end,
+                    },
+                    {
+                        text = _("Label entries in Readeck with their star rating"),
+                        help_text = _("Sync star ratings to Readeck as labels, regardless of threshold for marking entries as liked."),
+                        keep_menu_open = true,
+                        checked_func = function() return self.sync_star_rating_as_label end,
+                        callback = function()
+                            self.sync_star_rating_as_label = not self.sync_star_rating_as_label
+                            self:saveSettings()
                         end,
                     },
                     {
@@ -1266,7 +1327,7 @@ function Readeck:removeArticle(path, mark_read_complete)
                 local doc_settings = DocSettings:open(path)
                 local summary = doc_settings:readSetting("summary")
                 if summary and summary.rating then
-                    if summary.rating > 0 then
+                    if summary.rating > 0 and self.sync_star_rating_as_label == true then
                         local label = {summary.rating.."-star"}
                         body.add_labels = label
                     end
@@ -1532,7 +1593,8 @@ function Readeck:saveSettings()
         cached_password       = self.cached_password,
         cached_server_url     = self.cached_server_url,
         sync_star_status = self.sync_star_status,
-        remote_star_threshold= self.remote_star_threshold,
+        remote_star_threshold = self.remote_star_threshold,
+        sync_star_rating_as_label = self.sync_star_rating_as_label,
     }
     self.rd_settings:saveSetting("readeck", tempsettings)
     self.rd_settings:flush()
