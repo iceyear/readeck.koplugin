@@ -7,6 +7,7 @@
 
 local BD = require("ui/bidi")
 local DataStorage = require("datastorage")
+local Device = require("device")
 local Dispatcher = require("dispatcher")
 local DocSettings = require("docsettings")
 local DocumentRegistry = require("document/documentregistry")
@@ -16,7 +17,9 @@ local FileManager = require("apps/filemanager/filemanager")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
 local ButtonDialog= require("ui/widget/buttondialog")
+local ConfirmBox = require("ui/widget/confirmbox")
 local JSON = require("json")
+local QRMessage = require("ui/widget/qrmessage")
 local RadioButtonWidget = require("ui/widget/radiobuttonwidget")
 local LuaSettings = require("frontend/luasettings")
 local Math = require("optmath")
@@ -77,6 +80,8 @@ Log.level = Log.DEBUG -- 可以通过设置 Log.level 的值来调整日志级�
 local article_id_suffix = " [rd-id_"
 local article_id_postfix = "]"
 local failed, skipped, downloaded = 1, 2, 3
+local OAUTH_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+local DEFAULT_OAUTH_SCOPES = "bookmarks:read bookmarks:write"
 
 local Readeck = WidgetContainer:extend{
     name = "readeck",
@@ -94,6 +99,13 @@ function Readeck:init()
     self.cached_username = ""
     self.cached_password = ""
     self.cached_server_url = ""
+    self.cached_auth_method = ""
+    self.oauth_client_id = ""
+    self.oauth_refresh_token = ""
+    self.oauth_rng_seeded = false
+    self.oauth_poll_state = nil
+    self.oauth_prompt_dialog = nil
+    self.sync_in_progress = false
     -- default values so that user doesn't have to explicitly set them
     self.is_delete_finished = true
     self.is_delete_read = false
@@ -145,6 +157,9 @@ function Readeck:init()
     self.cached_username = self.rd_settings.data.readeck.cached_username or ""
     self.cached_password = self.rd_settings.data.readeck.cached_password or ""
     self.cached_server_url = self.rd_settings.data.readeck.cached_server_url or ""
+    self.cached_auth_method = self.rd_settings.data.readeck.cached_auth_method or ""
+    self.oauth_client_id = self.rd_settings.data.readeck.oauth_client_id or ""
+    self.oauth_refresh_token = self.rd_settings.data.readeck.oauth_refresh_token or ""
     
     if self.rd_settings.data.readeck.is_delete_finished ~= nil then
         self.is_delete_finished = self.rd_settings.data.readeck.is_delete_finished
@@ -568,32 +583,57 @@ function Readeck:addToMainMenu(menu_items)
                         separator = true,
                     },
                     {
-                        text = _("Reset access token"),
-                        keep_menu_open = true,
-                        callback = function()
-                            self:resetAccessToken()
-                        end,
-                        enabled_func = function()
-                            return not self:isempty(self.access_token)
-                        end,
-                    },
-                    {
-                        text = _("Clear all cached tokens"),
-                        keep_menu_open = true,
-                        callback = function()
-                            self:clearAllTokens()
-                        end,
-                        enabled_func = function()
-                            return not self:isempty(self.access_token)
-                        end,
-                        separator = true,
-                    },
-                    {
                         text = _("Set timeout"),
                         keep_menu_open = true,
                         callback = function()
                             self:editTimeoutSettings()
                         end,
+                    },
+                    {
+                        text = _("Authentication"),
+                        keep_menu_open = true,
+                        sub_item_table = {
+                            {
+                                text = _("Authorize with OAuth"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    NetworkMgr:runWhenOnline(function()
+                                        self:authorizeWithOAuthDeviceFlowAsync()
+                                    end)
+                                end,
+                            },
+                            {
+                                text = _("Reset access token"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:resetAccessToken()
+                                end,
+                                enabled_func = function()
+                                    return not self:isempty(self.access_token)
+                                        or not self:isempty(self.oauth_refresh_token)
+                                        or not self:isempty(self.auth_token)
+                                end,
+                            },
+                            {
+                                text = _("Clear all cached tokens"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:clearAllTokens()
+                                end,
+                                enabled_func = function()
+                                    return not self:isempty(self.access_token)
+                                        or not self:isempty(self.oauth_refresh_token)
+                                        or not self:isempty(self.auth_token)
+                                end,
+                            },
+                            {
+                                text = _("Alternative credentials"),
+                                keep_menu_open = true,
+                                callback = function()
+                                    self:editAuthSettings()
+                                end,
+                            },
+                        },
                     },
                     {
                         text = _("Help"),
@@ -638,10 +678,20 @@ function Readeck:resetAccessToken()
     self.access_token = ""
     self.token_expiry = 0
     
-    -- Try to get a new token immediately
-    if self:getBearerToken() then
+    -- Try to get a new token immediately; OAuth may continue asynchronously.
+    if self:getBearerToken({
+        on_oauth_success = function()
+            UIManager:show(InfoMessage:new{
+                text = _("Access token reset successfully"),
+            })
+        end,
+    }) then
         UIManager:show(InfoMessage:new{
             text = _("Access token reset successfully"),
+        })
+    elseif self:isOAuthPollingActive() then
+        UIManager:show(InfoMessage:new{
+            text = _("OAuth authorization started. Finish login to refresh access token."),
         })
     else
         UIManager:show(InfoMessage:new{
@@ -652,6 +702,7 @@ end
 
 function Readeck:clearAllTokens()
     Log:info("Clearing all cached tokens and credentials")
+    self:cancelOAuthPolling()
     
     -- Clear all cached authentication data
     self.access_token = ""
@@ -660,6 +711,9 @@ function Readeck:clearAllTokens()
     self.cached_username = ""
     self.cached_password = ""
     self.cached_server_url = ""
+    self.cached_auth_method = ""
+    self.oauth_client_id = ""
+    self.oauth_refresh_token = ""
     
     -- Save the cleared state
     self:saveSettings()
@@ -669,22 +723,601 @@ function Readeck:clearAllTokens()
     })
 end
 
-function Readeck:getBearerToken()
+function Readeck:urlEncodeFormValue(value)
+    local s = tostring(value or "")
+    s = s:gsub("\n", "\r\n")
+    s = s:gsub(" ", "+")
+    s = s:gsub("([^%w%+%-_%.~])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
+    return s
+end
+
+function Readeck:encodeFormData(fields)
+    local parts = {}
+    for key, value in pairs(fields or {}) do
+        if type(value) == "table" then
+            for _, item in ipairs(value) do
+                table.insert(parts, self:urlEncodeFormValue(key) .. "=" .. self:urlEncodeFormValue(item))
+            end
+        else
+            table.insert(parts, self:urlEncodeFormValue(key) .. "=" .. self:urlEncodeFormValue(value))
+        end
+    end
+    table.sort(parts)
+    return table.concat(parts, "&")
+end
+
+function Readeck:callOAuthFormAPI(apiurl, form_data)
+    if self:isempty(self.server_url) then
+        Log:warn("OAuth request attempted without configured server URL")
+        return nil, "config_error"
+    end
+
+    local sink = {}
+    local body = self:encodeFormData(form_data)
+    local request = {
+        method = "POST",
+        url = self.server_url .. apiurl,
+        sink = ltn12.sink.table(sink),
+        source = ltn12.source.string(body),
+        headers = {
+            ["Content-type"] = "application/x-www-form-urlencoded",
+            ["Accept"] = "application/json, */*",
+            ["Content-Length"] = tostring(#body),
+        },
+    }
+
+    socketutil:set_timeout(self.block_timeout, self.total_timeout)
+    local code, resp_headers = socket.skip(1, http.request(request))
+    socketutil:reset_timeout()
+    if not resp_headers then
+        return nil, "network_error"
+    end
+    local code_num = tonumber(code)
+
+    local content = table.concat(sink)
+    local result
+    if content ~= "" then
+        local ok, parsed = pcall(JSON.decode, content)
+        if ok then
+            result = parsed
+        end
+    end
+    if code_num and code_num >= 200 and code_num < 300 then
+        return result or {}, nil, code_num
+    end
+    return result, "http_error", code_num or code
+end
+
+function Readeck:makeOAuthSoftwareID()
+    if not self.oauth_rng_seeded then
+        local seed = os.time()
+        if socket and socket.gettime then
+            seed = seed + math.floor(socket.gettime() * 1000)
+        end
+        math.randomseed(seed)
+        self.oauth_rng_seeded = true
+    end
+    local template = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
+    return (template:gsub("[xy]", function(c)
+        local v
+        if c == "x" then
+            v = math.random(0, 15)
+        else
+            v = math.random(8, 11)
+        end
+        return string.format("%x", v)
+    end))
+end
+
+function Readeck:storeAccessToken(method, token, expires_in, auth_meta)
+    local now = os.time()
+    local ttl = tonumber(expires_in)
+    if ttl and ttl > 0 then
+        self.token_expiry = now + ttl
+    else
+        self.token_expiry = now + 365 * 24 * 60 * 60
+    end
+    self.access_token = token
+    self.cached_auth_method = method
+    self.cached_server_url = self.server_url
+
+    if method == "api_token" then
+        self.cached_auth_token = self.auth_token
+        self.cached_username = ""
+        self.cached_password = ""
+    elseif method == "legacy" then
+        self.cached_auth_token = ""
+        self.cached_username = self.username or ""
+        self.cached_password = self.password or ""
+    else
+        self.cached_auth_token = ""
+        self.cached_username = ""
+        self.cached_password = ""
+    end
+
+    if auth_meta then
+        if auth_meta.oauth_refresh_token ~= nil then
+            self.oauth_refresh_token = auth_meta.oauth_refresh_token
+        end
+        if auth_meta.oauth_client_id ~= nil then
+            self.oauth_client_id = auth_meta.oauth_client_id
+        end
+    end
+    self:saveSettings()
+end
+
+function Readeck:authenticateWithApiToken()
+    Log:info("Using provided API token")
+    self:storeAccessToken("api_token", self.auth_token, 365 * 24 * 60 * 60)
+    return true
+end
+
+function Readeck:authenticateWithLegacy(show_failure_message)
+    if self:isempty(self.username) or self:isempty(self.password) then
+        return false
+    end
+
+    Log:info("Attempting legacy username/password login")
+    local bodyJSON = JSON.encode({
+        username = self.username,
+        password = self.password,
+        application = "KOReader",
+    })
+    local headers = {
+        ["Content-type"] = "application/json",
+        ["Accept"] = "application/json, */*",
+        ["Content-Length"] = tostring(#bodyJSON),
+    }
+
+    local result = self:callAPI("POST", "/api/auth", headers, bodyJSON, "", true)
+    if result and result.token then
+        Log:info("Legacy authentication successful")
+        self:storeAccessToken("legacy", result.token, 365 * 24 * 60 * 60)
+        return true
+    end
+
+    Log:warn("Legacy authentication failed")
+    if show_failure_message then
+        UIManager:show(InfoMessage:new{
+            text = _("Could not login with username/password."),
+        })
+    end
+    return false
+end
+
+function Readeck:formatOAuthUserCode(user_code)
+    if not user_code or user_code == "" then
+        return ""
+    end
+    if #user_code == 8 then
+        return user_code:sub(1, 4) .. "-" .. user_code:sub(5)
+    end
+    return user_code
+end
+
+function Readeck:refreshOAuthToken()
+    if self:isempty(self.oauth_refresh_token) or self:isempty(self.oauth_client_id) then
+        return false
+    end
+
+    Log:info("Attempting OAuth refresh token flow")
+    local result = self:callOAuthFormAPI("/api/oauth/token", {
+        grant_type = "refresh_token",
+        client_id = self.oauth_client_id,
+        refresh_token = self.oauth_refresh_token,
+    })
+    if result and result.access_token then
+        Log:info("OAuth token refreshed")
+        self:storeAccessToken("oauth", result.access_token, result.expires_in, {
+            oauth_refresh_token = result.refresh_token or self.oauth_refresh_token,
+            oauth_client_id = self.oauth_client_id,
+        })
+        return true
+    end
+
+    return false
+end
+
+function Readeck:getOAuthDeviceAuthorizationContext()
+    if self:isempty(self.server_url) then
+        UIManager:show(MultiConfirmBox:new{
+            text = _("Please configure the Readeck server URL first."),
+            choice1_text = _("Server settings"),
+            choice1_callback = function() self:editServerSettings() end,
+            choice2_text = _("Cancel"),
+            choice2_callback = function() end,
+        })
+        return nil
+    end
+
+    local client_name = "Readeck for KOReader"
+    local software_id = self:makeOAuthSoftwareID()
+
+    local client_info, client_err, client_code = self:callOAuthFormAPI("/api/oauth/client", {
+        client_name = client_name,
+        client_uri = "https://github.com/iceyear/readeck.koplugin",
+        software_id = software_id,
+        software_version = "1.0",
+        grant_types = { OAUTH_DEVICE_GRANT },
+    })
+
+    if not client_info or not client_info.client_id then
+        Log:error("OAuth client registration failed", client_err or "", client_code or "")
+        UIManager:show(InfoMessage:new{
+            text = _("OAuth setup failed: could not register client."),
+        })
+        return nil
+    end
+
+    local client_id = client_info.client_id
+    local device_info, device_err, device_code = self:callOAuthFormAPI("/api/oauth/device", {
+        client_id = client_id,
+        scope = DEFAULT_OAUTH_SCOPES,
+    })
+    if not device_info or not device_info.device_code then
+        Log:error("OAuth device code request failed", device_err or "", device_code or "")
+        UIManager:show(InfoMessage:new{
+            text = _("OAuth setup failed: could not request device code."),
+        })
+        return nil
+    end
+
+    local verification_uri = device_info.verification_uri or ""
+    local verification_uri_complete = device_info.verification_uri_complete or verification_uri
+    local user_code = self:formatOAuthUserCode(device_info.user_code)
+    local fallback_uri = verification_uri ~= "" and verification_uri or (self.server_url .. "/device")
+    local interval = tonumber(device_info.interval) or 5
+    if interval < 5 then
+        interval = 5
+    end
+    local expires_in = tonumber(device_info.expires_in) or 300
+    local deadline = os.time() + math.max(30, expires_in)
+
+    return {
+        client_id = client_id,
+        device_code = device_info.device_code,
+        interval = interval,
+        deadline = deadline,
+        verification_uri_complete = verification_uri_complete,
+        fallback_uri = fallback_uri,
+        user_code = user_code,
+    }
+end
+
+function Readeck:closeOAuthPromptDialog()
+    if not self.oauth_prompt_dialog then
+        return
+    end
+    local prompt = self.oauth_prompt_dialog
+    self.oauth_prompt_dialog = nil
+    UIManager:close(prompt)
+end
+
+function Readeck:isOAuthPollingActive()
+    return self.oauth_poll_state and not self.oauth_poll_state.done
+end
+
+function Readeck:showOAuthPollingPrompt(text)
+    self:closeOAuthPromptDialog()
+    self.oauth_prompt_dialog = ConfirmBox:new{
+        text = text,
+        cancel_text = _("Cancel"),
+        cancel_callback = function()
+            self:cancelOAuthPolling(_("OAuth authorization canceled."))
+        end,
+        no_ok_button = true,
+        keep_dialog_open = true,
+        other_buttons = {{
+            {
+                text = _("Show QR"),
+                callback = function()
+                    self:showOAuthPollingQR()
+                end,
+            },
+        }},
+        other_buttons_first = true,
+    }
+    UIManager:show(self.oauth_prompt_dialog)
+end
+
+function Readeck:addOAuthSuccessCallback(state, callback)
+    if type(callback) ~= "function" or not state then
+        return
+    end
+    state.on_success_callbacks = state.on_success_callbacks or {}
+    for _, existing in ipairs(state.on_success_callbacks) do
+        if existing == callback then
+            return
+        end
+    end
+    table.insert(state.on_success_callbacks, callback)
+end
+
+function Readeck:evaluateOAuthDeviceTokenPoll(ctx, token_result, poll_err, poll_code, wait_interval)
+    if token_result and token_result.access_token then
+        self:storeAccessToken("oauth", token_result.access_token, token_result.expires_in, {
+            oauth_refresh_token = token_result.refresh_token or "",
+            oauth_client_id = ctx.client_id,
+        })
+        return "success"
+    end
+
+    local oauth_error = token_result and token_result.error or ""
+    if oauth_error == "authorization_pending" then
+        return "retry", wait_interval
+    end
+    if oauth_error == "slow_down" then
+        return "retry", wait_interval + 5
+    end
+    if oauth_error == "access_denied" then
+        return "fail", _("OAuth authorization was denied.")
+    end
+    if oauth_error == "expired_token" then
+        return "fail", _("OAuth authorization request expired.")
+    end
+    if poll_code and poll_code >= 500 then
+        Log:warn("OAuth token polling server error", poll_code)
+        return "retry", wait_interval + 5
+    end
+
+    Log:error("OAuth token polling failed", poll_err or "", oauth_error or "", poll_code or "")
+    return "fail", _("OAuth token request failed.")
+end
+
+function Readeck:cancelOAuthPolling(message)
+    local state = self.oauth_poll_state
+    if not state or state.done then
+        return
+    end
+
+    state.done = true
+    if state.poll_callback then
+        UIManager:unschedule(state.poll_callback)
+        state.poll_callback = nil
+    end
+    if state.qr_dialog then
+        local dialog = state.qr_dialog
+        state.qr_dialog = nil
+        UIManager:close(dialog)
+    end
+    self:closeOAuthPromptDialog()
+    self.oauth_poll_state = nil
+    if message then
+        UIManager:show(InfoMessage:new{
+            text = message,
+        })
+    end
+end
+
+function Readeck:showOAuthPollingQR()
+    local state = self.oauth_poll_state
+    if not state or state.done then
+        UIManager:show(InfoMessage:new{
+            text = _("No OAuth authorization is in progress."),
+        })
+        return false
+    end
+    if not state.verification_uri_complete or state.verification_uri_complete == "" then
+        UIManager:show(InfoMessage:new{
+            text = _("No QR URL is available for this authorization flow."),
+        })
+        return false
+    end
+    if state.qr_dialog then
+        return true
+    end
+
+    state.qr_dialog = QRMessage:new{
+        text = state.verification_uri_complete,
+        width = Device.screen:getWidth(),
+        height = Device.screen:getHeight(),
+        dismiss_callback = function()
+            if state and not state.done then
+                state.qr_dialog = nil
+            end
+        end,
+    }
+    UIManager:show(state.qr_dialog)
+    return true
+end
+
+function Readeck:startOAuthPollingAsync(ctx, on_success)
+    if not ctx then
+        return false
+    end
+    if self.oauth_poll_state and not self.oauth_poll_state.done then
+        self:cancelOAuthPolling()
+    end
+
+    local state = {
+        done = false,
+        poll_callback = nil,
+        qr_dialog = nil,
+        interval = ctx.interval,
+        verification_uri_complete = ctx.verification_uri_complete,
+        fallback_uri = ctx.fallback_uri,
+        user_code = ctx.user_code,
+        on_success_callbacks = {},
+    }
+    self:addOAuthSuccessCallback(state, on_success)
+    self.oauth_poll_state = state
+
+    local function finish(success, message)
+        if state.done then
+            return
+        end
+        state.done = true
+        if state.poll_callback then
+            UIManager:unschedule(state.poll_callback)
+            state.poll_callback = nil
+        end
+        if state.qr_dialog then
+            local dialog = state.qr_dialog
+            state.qr_dialog = nil
+            UIManager:close(dialog)
+        end
+        if self.oauth_poll_state == state then
+            self.oauth_poll_state = nil
+        end
+        self:closeOAuthPromptDialog()
+        if message then
+            UIManager:show(InfoMessage:new{
+                text = message,
+            })
+        end
+        if success and state.on_success_callbacks then
+            for _, cb in ipairs(state.on_success_callbacks) do
+                local callback = cb
+                UIManager:scheduleIn(0, function()
+                    local ok, err = pcall(callback)
+                    if not ok then
+                        Log:error("OAuth success callback failed:", err)
+                    end
+                end)
+            end
+        end
+        return success
+    end
+
+    local function schedule_next_poll(delay)
+        if state.done then
+            return
+        end
+        state.poll_callback = function()
+            state.poll_callback = nil
+            if state.done then
+                return
+            end
+            if os.time() >= ctx.deadline then
+                finish(false, _("OAuth login timed out."))
+                return
+            end
+
+            local token_result, poll_err, poll_code = self:callOAuthFormAPI("/api/oauth/token", {
+                grant_type = OAUTH_DEVICE_GRANT,
+                client_id = ctx.client_id,
+                device_code = ctx.device_code,
+            })
+            local outcome, value = self:evaluateOAuthDeviceTokenPoll(
+                ctx,
+                token_result,
+                poll_err,
+                poll_code,
+                state.interval
+            )
+            if outcome == "success" then
+                finish(true, _("OAuth authorization successful."))
+                return
+            end
+            if outcome == "retry" then
+                state.interval = value
+                schedule_next_poll(state.interval)
+                return
+            end
+            finish(false, value)
+        end
+        UIManager:scheduleIn(delay, state.poll_callback)
+    end
+
+    schedule_next_poll(state.interval)
+    return true
+end
+
+function Readeck:authorizeWithOAuthDeviceFlowAsync(options)
+    Log:info("Starting OAuth device flow (async)")
+    options = options or {}
+    if self.oauth_poll_state and not self.oauth_poll_state.done then
+        local current_state = self.oauth_poll_state
+        self:addOAuthSuccessCallback(current_state, options.on_success)
+        if options.auto_trigger then
+            return false
+        end
+        local text = _("OAuth authorization is already in progress.")
+        if current_state.fallback_uri and current_state.user_code then
+            text = text .. T(_("\n\nOpen this URL in your browser:\n%1\nCode: %2"),
+                current_state.fallback_uri,
+                current_state.user_code)
+        end
+        self:showOAuthPollingPrompt(text)
+        return false
+    end
+
+    local ctx = self:getOAuthDeviceAuthorizationContext()
+    if not ctx then
+        return false
+    end
+
+    self:startOAuthPollingAsync(ctx, options.on_success)
+    if not self.oauth_poll_state or self.oauth_poll_state.done then
+        return false
+    end
+
+    self:showOAuthPollingPrompt(
+        T(_("OAuth login started.\nOpen this URL in your browser:\n%1\nCode: %2"),
+            ctx.fallback_uri,
+            ctx.user_code)
+    )
+    return true
+end
+
+function Readeck:getCurrentAuthMethod()
+    if not self:isempty(self.auth_token) then
+        return "api_token"
+    end
+
+    local has_legacy_creds = not self:isempty(self.username) and not self:isempty(self.password)
+    local has_oauth_context = (self.cached_auth_method == "oauth")
+        or (not self:isempty(self.oauth_refresh_token))
+
+    if has_oauth_context then
+        return "oauth"
+    end
+    if has_legacy_creds then
+        return "legacy"
+    end
+    return "oauth"
+end
+
+function Readeck:isAuthContextChanged(auth_method)
+    if self.server_url ~= self.cached_server_url then
+        return true
+    end
+    if auth_method ~= self.cached_auth_method then
+        return true
+    end
+
+    if auth_method == "api_token" then
+        return self.auth_token ~= self.cached_auth_token
+    end
+    if auth_method == "legacy" then
+        return (self.username or "") ~= (self.cached_username or "")
+            or (self.password or "") ~= (self.cached_password or "")
+    end
+    return false
+end
+
+function Readeck:getBearerToken(options)
     Log:debug("Getting bearer token")
-    
-    -- Check if the configuration is complete
-    local server_empty = self:isempty(self.server_url) 
-    local auth_empty = self:isempty(self.auth_token) and (self:isempty(self.username) or self:isempty(self.password))
+    options = options or {}
+    local function authorize_with_oauth()
+        self:authorizeWithOAuthDeviceFlowAsync({
+            auto_trigger = true,
+            on_success = options.on_oauth_success,
+        })
+        return self:isOAuthPollingActive()
+    end
+
+    local server_empty = self:isempty(self.server_url)
     local directory_empty = self:isempty(self.directory)
-    
-    if server_empty or auth_empty or directory_empty then
-        Log:warn("Configuration incomplete - Server:", server_empty and "missing" or "ok", 
-                 ", Auth:", auth_empty and "missing" or "ok", 
+    if server_empty or directory_empty then
+        Log:warn("Configuration incomplete - Server:", server_empty and "missing" or "ok",
                  ", Directory:", directory_empty and "missing" or "ok")
         UIManager:show(MultiConfirmBox:new{
             text = _("Please configure the server settings and set a download folder."),
             choice1_text_func = function()
-                if server_empty or auth_empty then
+                if server_empty then
                     return _("Server (★)")
                 else
                     return _("Server")
@@ -703,11 +1336,10 @@ function Readeck:getBearerToken()
         return false
     end
 
-    -- Check if the download directory is valid
     local dir_mode = lfs.attributes(self.directory, "mode")
     if dir_mode ~= "directory" then
-         Log:warn("Invalid download directory:", self.directory)
-         UIManager:show(InfoMessage:new{
+        Log:warn("Invalid download directory:", self.directory)
+        UIManager:show(InfoMessage:new{
             text = _("The download directory is not valid.\nPlease configure it in the settings.")
         })
         return false
@@ -716,89 +1348,43 @@ function Readeck:getBearerToken()
         self.directory = self.directory .. "/"
     end
 
-    -- 检查是否已有访问令牌并且令牌仍有效，同时验证是否使用相同的认证信息
     local now = os.time()
-    local auth_changed = false
-    
-    -- 检查认证信息是否有变化
-    if not self:isempty(self.auth_token) then
-        -- 使用 API token 的情况
-        auth_changed = (self.auth_token ~= self.cached_auth_token) or 
-                      (self.server_url ~= self.cached_server_url)
-    else
-        -- 使用用户名密码的情况
-        auth_changed = (self.username ~= self.cached_username) or 
-                      (self.password ~= self.cached_password) or
-                      (self.server_url ~= self.cached_server_url)
-    end
-    
+    local auth_method = self:getCurrentAuthMethod()
+    local auth_changed = self:isAuthContextChanged(auth_method)
     if not self:isempty(self.access_token) and self.token_expiry > now + 300 and not auth_changed then
-        -- 令牌仍有效且认证信息未变化，无需更新
         Log:debug("Using cached token, still valid for", self.token_expiry - now, "seconds")
         return true
     end
-    
-    if auth_changed then
-        Log:debug("Authentication credentials changed, invalidating cached token")
+
+    if auth_method == "api_token" then
+        return self:authenticateWithApiToken()
     end
 
-    -- 如果已经有 API token 则直接使用
-    if not self:isempty(self.auth_token) then
-        Log:info("Using provided API token")
-        self.access_token = self.auth_token
-        -- 设置一个很长的过期时间，因为API token通常不会过期
-        self.token_expiry = now + 365 * 24 * 60 * 60 -- 一年
-        -- 保存用于生成此 access_token 的认证信息
-        self.cached_auth_token = self.auth_token
-        self.cached_username = ""
-        self.cached_password = ""
-        self.cached_server_url = self.server_url
-        self:saveSettings() -- 保存新的令牌和过期时间
-        return true
-    end
-
-    -- 如果没有token，则使用用户名密码获取
-    Log:info("No token provided, attempting to login with username/password")
-    local login_url = "/api/auth"  -- 修改认证路径，添加 /api 前缀
-
-    local body = {
-        username = self.username,
-        password = self.password,
-        application = "KOReader"
-    }
-
-    Log:debug("Auth request - Username:", self.username, "App: KOReader")
-    local bodyJSON = JSON.encode(body)
-    Log:debug("Auth request body:", bodyJSON)
-
-    local headers = {
-        ["Content-type"] = "application/json",
-        ["Accept"] = "application/json, */*",
-        ["Content-Length"] = tostring(#bodyJSON),
-    }
-    
-    Log:debug("Sending auth request to", self.server_url .. login_url)
-    local result = self:callAPI("POST", login_url, headers, bodyJSON, "")
-    
-    if result and result.token then
-        Log:info("Authentication successful, token received")
-        self.access_token = result.token
-        self.token_expiry = now + 365 * 24 * 60 * 60  -- 假设token一年有效
-        -- 保存用于生成此 access_token 的认证信息
-        self.cached_auth_token = ""
-        self.cached_username = self.username
-        self.cached_password = self.password
-        self.cached_server_url = self.server_url
-        -- 保存访问令牌和过期时间
-        self:saveSettings()
-        return true
-    else
-        Log:error("Authentication failed")
-        UIManager:show(InfoMessage:new{
-            text = _("Could not login to Readeck server."), 
-        })
+    if auth_method == "oauth" then
+        if self:refreshOAuthToken() then
+            return true
+        end
+        if authorize_with_oauth() then
+            return false
+        end
+        if self:authenticateWithLegacy(false) then
+            return true
+        end
         return false
     end
+
+    if self:authenticateWithLegacy(true) then
+        return true
+    end
+    authorize_with_oauth()
+    return false
+end
+
+function Readeck:scheduleSyncAfterOAuth()
+    NetworkMgr:runWhenOnline(function()
+        self:synchronize()
+        self:refreshCurrentDirIfNeeded()
+    end)
 end
 
 --- Get a JSON formatted list of articles from the server.
@@ -837,6 +1423,9 @@ function Readeck:getArticleList()
             -- 可能已经到了最后一页，没有更多文章了
             Log:debug("Couldn't get offset", offset)
             break -- 退出循环
+        elseif err == "auth_pending" then
+            Log:info("OAuth authorization started while requesting article list")
+            return nil, err
         elseif err or articles_json == nil then
             -- 发生了其他错误，不继续下载或删除文章
             Log:warn("Download at offset", offset, "failed with", err, code)
@@ -1016,18 +1605,30 @@ function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet, retry_a
         return nil, "network_error"
     end
     
-    -- Handle authentication errors - retry with fresh token if possible
-    if (code == 401 or code == 403) and not retry_auth and apiurl:sub(1, 1) == "/" then
+    -- Handle authentication errors - retry with fresh token if possible.
+    -- Do not recurse on auth endpoints themselves.
+    local is_auth_endpoint = (apiurl == "/api/auth") or (apiurl:sub(1, 11) == "/api/oauth/")
+    if (code == 401 or code == 403) and not retry_auth and apiurl:sub(1, 1) == "/" and not is_auth_endpoint then
         Log:info("Authentication failed (", code, "), attempting to refresh token")
         
         -- Clear current token and try to get a fresh one
         self.access_token = ""
         self.token_expiry = 0
         
-        if self:getBearerToken() then
+        local oauth_success_callback = nil
+        if self.sync_in_progress then
+            oauth_success_callback = function() self:scheduleSyncAfterOAuth() end
+        end
+
+        if self:getBearerToken({
+            on_oauth_success = oauth_success_callback,
+        }) then
             Log:info("Token refreshed, retrying API call")
             -- Retry the API call with the new token, but mark retry_auth to prevent infinite recursion
             return self:callAPI(method, apiurl, nil, body, filepath, quiet, true)
+        elseif self:isOAuthPollingActive() then
+            Log:info("OAuth authorization flow started after auth failure")
+            return nil, "auth_pending", code
         else
             Log:error("Failed to refresh token")
             if not quiet then
@@ -1102,12 +1703,16 @@ function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet, retry_a
 end
 
 function Readeck:synchronize()
+    self.sync_in_progress = true
     local info = InfoMessage:new{ text = _("Connecting…") }
     UIManager:show(info)
     UIManager:forceRePaint()
     UIManager:close(info)
 
-    if self:getBearerToken() == false then
+    if self:getBearerToken({
+        on_oauth_success = function() self:scheduleSyncAfterOAuth() end,
+    }) == false then
+        self.sync_in_progress = false
         return false
     end
     if self.download_queue and next(self.download_queue) ~= nil then
@@ -1133,7 +1738,11 @@ function Readeck:synchronize()
     local downloaded_count = 0
     local failed_count = 0
     if self.access_token ~= "" then
-        local articles = self:getArticleList()
+        local articles, list_err = self:getArticleList()
+        if list_err == "auth_pending" then
+            self.sync_in_progress = false
+            return false
+        end
         if articles then
             Log:debug("Number of articles:", #articles)
 
@@ -1165,6 +1774,7 @@ function Readeck:synchronize()
             UIManager:show(info)
         end -- articles
     end -- access_token
+    self.sync_in_progress = false
 end
 
 function Readeck:processRemoteDeletes(remote_article_ids)
@@ -1201,7 +1811,14 @@ function Readeck:processLocalFiles(mode)
         end
     end
 
-    if self:getBearerToken() == false then
+    if self:getBearerToken({
+        on_oauth_success = function()
+            NetworkMgr:runWhenOnline(function()
+                self:processLocalFiles(mode)
+                self:refreshCurrentDirIfNeeded()
+            end)
+        end,
+    }) == false then
         return 0, 0
     end
 
@@ -1246,7 +1863,20 @@ end
 function Readeck:addArticle(article_url)
     Log:debug("Adding article", article_url)
 
-    if not article_url or self:getBearerToken() == false then
+    if not article_url then
+        return false
+    end
+    if self:getBearerToken({
+        on_oauth_success = function()
+            NetworkMgr:runWhenOnline(function()
+                self:addArticle(article_url)
+                self:refreshCurrentDirIfNeeded()
+            end)
+        end,
+    }) == false then
+        if self:isOAuthPollingActive() then
+            return nil, "auth_pending"
+        end
         return false
     end
 
@@ -1447,11 +2077,10 @@ end
 
 function Readeck:editServerSettings()
     local text_info = T(_([[
-Enter the details of your Readeck server and account.
+Configure your Readeck server URL.
 
-You can use either an API token (preferred) or username/password for authentication.
-
-If you use both, the API token will be used first. If token authentication fails, username/password will be used as fallback.
+Authentication options are available in:
+Settings > Authentication
 
 Note: For the Server URL, provide the base URL without the /api path (e.g., http://example.com).
 
@@ -1463,19 +2092,6 @@ Restart KOReader after editing the config file.]]), BD.dirpath(DataStorage:getSe
             {
                 text = self.server_url,
                 hint = _("Server URL (without /api)")
-            },
-            {
-                text = self.auth_token,
-                hint = _("API Token (recommended)")
-            },
-            {
-                text = self.username,
-                hint = _("Username (alternative)")
-            },
-            {
-                text = self.password,
-                text_type = "password",
-                hint = _("Password (alternative)")
             },
         },
         buttons = {
@@ -1498,9 +2114,6 @@ Restart KOReader after editing the config file.]]), BD.dirpath(DataStorage:getSe
                     callback = function()
                         local myfields = self.settings_dialog:getFields()
                         self.server_url = myfields[1]:gsub("/*$", "")  -- remove all trailing "/" slashes
-                        self.auth_token = myfields[2]
-                        self.username   = myfields[3]
-                        self.password   = myfields[4]
                         self:saveSettings()
                         UIManager:close(self.settings_dialog)
                     end
@@ -1510,6 +2123,64 @@ Restart KOReader after editing the config file.]]), BD.dirpath(DataStorage:getSe
     }
     UIManager:show(self.settings_dialog)
     self.settings_dialog:onShowKeyboard()
+end
+
+function Readeck:editAuthSettings()
+    local text_info = T(_([[
+Configure credentials for Readeck access.
+
+API token is preferred when provided.
+If not set, OAuth is used by default.
+Username/password is kept as fallback for older servers.]]), BD.dirpath(DataStorage:getSettingsDir()))
+
+    self.auth_settings_dialog = MultiInputDialog:new {
+        title = _("Authentication settings"),
+        fields = {
+            {
+                text = self.auth_token,
+                hint = _("API Token (optional)")
+            },
+            {
+                text = self.username,
+                hint = _("Username (legacy fallback)")
+            },
+            {
+                text = self.password,
+                text_type = "password",
+                hint = _("Password (legacy fallback)")
+            },
+        },
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    id = "close",
+                    callback = function()
+                        UIManager:close(self.auth_settings_dialog)
+                    end
+                },
+                {
+                    text = _("Info"),
+                    callback = function()
+                        UIManager:show(InfoMessage:new{ text = text_info })
+                    end
+                },
+                {
+                    text = _("Apply"),
+                    callback = function()
+                        local myfields = self.auth_settings_dialog:getFields()
+                        self.auth_token = myfields[1]
+                        self.username   = myfields[2]
+                        self.password   = myfields[3]
+                        self:saveSettings()
+                        UIManager:close(self.auth_settings_dialog)
+                    end
+                },
+            },
+        },
+    }
+    UIManager:show(self.auth_settings_dialog)
+    self.auth_settings_dialog:onShowKeyboard()
 end
 
 function Readeck:editClientSettings()
@@ -1567,6 +2238,8 @@ function Readeck:saveSettings()
         auth_token            = self.auth_token,
         username              = self.username,
         password              = self.password,
+        oauth_client_id       = self.oauth_client_id,
+        oauth_refresh_token   = self.oauth_refresh_token,
         directory             = self.directory,
         filter_tag            = self.filter_tag,
         sort_param            = self.sort_param,
@@ -1592,6 +2265,7 @@ function Readeck:saveSettings()
         cached_username       = self.cached_username,
         cached_password       = self.cached_password,
         cached_server_url     = self.cached_server_url,
+        cached_auth_method    = self.cached_auth_method,
         sync_star_status = self.sync_star_status,
         remote_star_threshold = self.remote_star_threshold,
         sync_star_rating_as_label = self.sync_star_rating_as_label,
@@ -1622,10 +2296,14 @@ function Readeck:onAddReadeckArticle(article_url)
         return
     end
 
-    local readeck_result = self:addArticle(article_url)
+    local readeck_result, add_err = self:addArticle(article_url)
     if readeck_result then
         UIManager:show(InfoMessage:new{
             text = T(_("Article added to Readeck:\n%1"), BD.url(article_url)),
+        })
+    elseif add_err == "auth_pending" then
+        UIManager:show(InfoMessage:new{
+            text = _("OAuth authorization started. Finish login and the article will be retried."),
         })
     else
         UIManager:show(InfoMessage:new{
@@ -1787,7 +2465,13 @@ function Readeck:exportHighlights()
         return
     end
 
-    if self:getBearerToken() == false then
+    if self:getBearerToken({
+        on_oauth_success = function()
+            NetworkMgr:runWhenOnline(function()
+                self:exportHighlights()
+            end)
+        end,
+    }) == false then
         return false
     end
 
@@ -1795,6 +2479,9 @@ function Readeck:exportHighlights()
     local existing_highlights_raw, err = self:callAPI("GET", "/api/bookmarks/" .. article_id .. "/annotations", nil, "", "", true)
     local existing_highlights = {}
     if err then
+        if err == "auth_pending" then
+            return false
+        end
         UIManager:show(InfoMessage:new{ text = _("Could not fetch existing highlights from Readeck. Aborting export.") })
         return
     end
