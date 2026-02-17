@@ -1441,6 +1441,8 @@ function Readeck:getArticleList()
             table.insert(new_article_list, article)
         end
 
+        local pending_articles = #new_article_list >= limit
+
         -- 应用过滤器
         new_article_list = self:filterIgnoredTags(new_article_list)
 
@@ -1453,7 +1455,7 @@ function Readeck:getArticleList()
             table.insert(article_list, article)
         end
 
-        if #new_article_list < limit then
+        if not pending_articles then
             -- 服务器返回的文章数量小于请求的数量，说明没有更多文章了
             Log:debug("No more articles to query")
             break
