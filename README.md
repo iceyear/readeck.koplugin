@@ -1,11 +1,12 @@
 <div align="center">
+
 # ⚠️ This fork is dedicated to 	readeck 0.22.2
 
->>> [!tip] What's new ?
-Readeck 0.22.2 embeds new highlights (with "note", transparent color, and.... New xHTML parsing). So we got this fixed.
-Btw we brought some news to make this plugin awesome again : "Readeck retrieval" is now "Readeck sync-it better !" and it sends highlights from all articles to your server.
-*Made with Claude Sonnet 4.6*
->>>
+> [!tip] 
+> ## What's new ?
+> Readeck 0.22.2 embeds new highlights (with "note", transparent color, and.... New xHTML parsing). So we got this fixed.
+> Btw we brought some news to make this plugin awesome again : "Readeck retrieval" is now "Readeck sync-it better !" and it sends highlights from all articles to your server.
+> *Made with Claude Sonnet 4.6*
 
 # 📚 Readeck Plugin for KOReader
 
