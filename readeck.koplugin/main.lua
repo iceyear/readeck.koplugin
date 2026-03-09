@@ -88,7 +88,7 @@ local Readeck = WidgetContainer:extend{
 }
 
 function Readeck:onDispatcherRegisterActions()
-    Dispatcher:registerAction("readeck_download", { category="none", event="SynchronizeReadeck", title=_("Readeck retrieval"), general=true,})
+    Dispatcher:registerAction("readeck_download", { category="none", event="SynchronizeReadeck", title=_("Readeck sync-it better !"), general=true,})
 end
 
 function Readeck:init()
@@ -258,6 +258,29 @@ function Readeck:addToMainMenu(menu_items)
                 end,
                 enabled_func = function()
                     return self.ui.document ~= nil
+                end,
+            },
+            {
+                text = _("Export all highlights to server"),
+                callback = function()
+                    NetworkMgr:runWhenOnline(function()
+                        local info = InfoMessage:new{ text = _("Exporting highlights…") }
+                        UIManager:show(info)
+                        UIManager:forceRePaint()
+                        UIManager:close(info)
+                        local s, e, sk = self:exportAllHighlights()
+                        local parts = {}
+                        if s and s > 0 then table.insert(parts, T(_("Exported: %1"), s)) end
+                        if e and e > 0 then table.insert(parts, T(_("Failed: %1"), e)) end
+                        if sk and sk > 0 then table.insert(parts, T(_("Skipped (overlap): %1"), sk)) end
+                        local msg = #parts > 0
+                            and T(_("Highlight export complete.\n%1"), table.concat(parts, "\n"))
+                            or _("No new highlights to export.")
+                        UIManager:show(InfoMessage:new{ text = msg })
+                    end)
+                end,
+                enabled_func = function()
+                    return self.directory ~= nil and self.directory ~= ""
                 end,
             },
             {
@@ -2319,7 +2342,7 @@ end
 
 function Readeck:onSynchronizeReadeck()
     local connect_callback = function()
-        self:synchronize()
+        self:sync()
         self:refreshCurrentDirIfNeeded()
     end
     NetworkMgr:runWhenOnline(connect_callback)
@@ -2356,102 +2379,736 @@ function Readeck:onCloseDocument()
     end
 end
 
--- Helper functions for highlight export
-local function _clean_highlight_selector(selector)
+-- =============================================================================
+-- Epub HTML reading helpers
+-- Used to resolve KOReader text-node offsets into Readeck element offsets.
+-- =============================================================================
+
+-- Per-session cache: epub_path -> html_content string.
+-- Avoids re-reading the epub for each highlight in the same article.
+local _epub_html_cache = {}
+
+-- Read one file from inside an epub (zip) archive.
+-- Uses the system `unzip` utility.  Returns the raw content string or nil.
+local function _epub_read_inner(epub_path, inner_path)
+    -- Shell-escape by replacing single-quotes
+    local safe_epub  = epub_path:gsub("'", "'\\''")
+    local safe_inner = inner_path:gsub("'", "'\\''")
+    local cmd = string.format("unzip -p '%s' '%s' 2>/dev/null", safe_epub, safe_inner)
+    local ok, pipe = pcall(io.popen, cmd)
+    if not ok or not pipe then return nil end
+    local data = pipe:read("*a")
+    pipe:close()
+    return (data and data ~= "") and data or nil
+end
+
+-- Locate the path (relative to epub root) of the first spine HTML document.
+local function _epub_find_main_html_path(epub_path)
+    local container = _epub_read_inner(epub_path, "META-INF/container.xml")
+    if not container then return nil end
+    local opf_path = container:match('full%-path="([^"]+)"')
+    if not opf_path then return nil end
+
+    local opf = _epub_read_inner(epub_path, opf_path)
+    if not opf then return nil end
+    local opf_dir = opf_path:match("^(.*/)") or ""
+
+    -- Build manifest: id -> href for HTML items only
+    local manifest = {}
+    for attrs in opf:gmatch("<item%s+([^>]+)/?>") do
+        local id   = attrs:match('id="([^"]+)"')
+        local href = attrs:match('href="([^"]+)"')
+        local mt   = attrs:match('media%-type="([^"]+)"')
+        if id and href and mt and mt:find("html", 1, true) then
+            manifest[id] = href
+        end
+    end
+
+    -- First itemref in the spine
+    local idref = opf:match('<itemref[^>]+idref="([^"]+)"')
+    if not idref then return nil end
+    local href = manifest[idref]
+    if not href then return nil end
+    return opf_dir .. href
+end
+
+-- Return (and cache) the main HTML content of the given epub.
+local function _epub_get_html(epub_path)
+    if _epub_html_cache[epub_path] then
+        return _epub_html_cache[epub_path]
+    end
+    local html_path = _epub_find_main_html_path(epub_path)
+    if not html_path then return nil end
+    local html = _epub_read_inner(epub_path, html_path)
+    if html then
+        _epub_html_cache[epub_path] = html
+    end
+    return html
+end
+
+-- Find the inner HTML of the element identified by a simple XPath selector
+-- such as "section/p[1]" or "section[1]/p[2]".
+-- Steps are matched against the HTML by finding the Nth same-tag occurrence
+-- within the current scope, then recursing into its content.
+-- Returns the inner HTML string or nil.
+local function _find_element_inner_html(html, selector)
+    -- Parse selector into {tag, index} steps
+    local steps = {}
+    for raw in (selector .. "/"):gmatch("([^/]+)/") do
+        local tag = raw:match("^([^%[]+)")
+        local idx = tonumber(raw:match("%[(%d+)%]")) or 1
+        if tag and tag ~= "" then
+            table.insert(steps, { tag = tag, idx = idx })
+        end
+    end
+
+    local cur = html
+    for _, step in ipairs(steps) do
+        local want_tag = step.tag
+        local want_idx = step.idx
+        -- Lua pattern that matches the opening tag (self-closing or not)
+        local open_pat  = "<" .. want_tag .. "[%s>]"
+        local close_pat = "</" .. want_tag .. "[%s>]"
+
+        local count  = 0
+        local result = nil
+        local i      = 1
+
+        while i <= #cur do
+            local op = cur:find(open_pat, i)
+            if not op then break end
+            local gt = cur:find(">", op, true)
+            if not gt then break end
+
+            local is_self = cur:sub(gt - 1, gt - 1) == "/"
+            if is_self then
+                count = count + 1
+                if count == want_idx then result = ""; break end
+                i = gt + 1
+            else
+                count = count + 1
+                if count == want_idx then
+                    -- Capture content until the matching closing tag
+                    local inner_start = gt + 1
+                    local depth = 1
+                    local p = inner_start
+                    while depth > 0 do
+                        local next_open  = cur:find(open_pat,  p)
+                        local next_close = cur:find(close_pat, p)
+                        if not next_close then
+                            -- Unclosed tag: take what we have
+                            result = cur:sub(inner_start)
+                            depth  = 0
+                            break
+                        end
+                        if next_open and next_open < next_close then
+                            local ne = cur:find(">", next_open, true)
+                            if not (ne and cur:sub(ne - 1, ne - 1) == "/") then
+                                depth = depth + 1
+                            end
+                            p = (ne or next_open) + 1
+                        else
+                            depth = depth - 1
+                            if depth == 0 then
+                                result = cur:sub(inner_start, next_close - 1)
+                            else
+                                local ce = cur:find(">", next_close, true)
+                                p = (ce or next_close) + 1
+                            end
+                        end
+                    end
+                    break
+                else
+                    i = gt + 1
+                end
+            end
+        end
+
+        if result == nil then return nil end
+        cur = result
+    end
+    return cur
+end
+
+-- Walk the inner HTML of an element and return the absolute character offset
+-- (Unicode codepoints, counting ALL descendant text) at which the N-th DIRECT
+-- text node of that element starts.  Then add local_offset to get the final
+-- position expected by the Readeck API.
+--
+-- "Direct text node N" is the N-th contiguous run of non-tag characters
+-- that appears at depth 0 inside the element (i.e. not inside a child element).
+-- Characters inside child elements DO contribute to the cumulative total
+-- because Readeck offsets are measured against the element's full text content.
+--
+-- Returns the absolute offset, or local_offset as a fallback if parsing fails.
+local function _compute_element_offset(inner_html, text_node_idx, local_offset)
+    local total      = 0   -- codepoints seen so far (all text, any depth)
+    local direct_tn  = 0   -- direct text-node counter (depth-0 only)
+    local depth      = 0   -- current HTML nesting depth
+    local in_direct  = false  -- are we currently inside a depth-0 text node?
+    local i          = 1
+    local n          = #inner_html
+
+    while i <= n do
+        local b = inner_html:byte(i)
+
+        if b == 60 then  -- '<'
+            in_direct = false  -- any tag ends the current direct text node
+            local gt = inner_html:find(">", i + 1, true)
+            if not gt then break end
+            local inner = inner_html:sub(i + 1, gt - 1)
+            local is_close = inner:sub(1, 1) == "/"
+            local is_self  = inner:sub(-1)   == "/"
+            if not is_self then
+                if is_close then
+                    if depth > 0 then depth = depth - 1 end
+                else
+                    depth = depth + 1
+                end
+            end
+            i = gt + 1
+
+        else
+            -- Text content (at any depth)
+            if depth == 0 and not in_direct then
+                -- Starting a new direct text node
+                direct_tn = direct_tn + 1
+                in_direct = true
+                if direct_tn == text_node_idx then
+                    -- Found it: absolute offset = chars accumulated so far + local_offset
+                    return total + local_offset
+                end
+            end
+
+            -- Count one Unicode codepoint and advance i
+            if b == 38 then  -- '&' — HTML entity, counts as 1 character
+                local semi = inner_html:find(";", i + 1, true)
+                if semi and semi - i < 12 then
+                    i = semi + 1
+                else
+                    i = i + 1
+                end
+            elseif b < 0x80 then
+                i = i + 1
+            elseif b >= 0xF0 then
+                i = i + 4
+            elseif b >= 0xE0 then
+                i = i + 3
+            elseif b >= 0xC0 then
+                i = i + 2
+            else
+                i = i + 1  -- UTF-8 continuation byte — skip, not a new codepoint
+            end
+            total = total + 1
+        end
+    end
+
+    -- text_node_idx was not found (e.g. epub HTML not parseable) — best-effort fallback
+    Log:warn("_compute_element_offset: text node", text_node_idx, "not found, using raw offset", local_offset)
+    return local_offset
+end
+
+-- =============================================================================
+-- Text-based highlight position search
+-- Used when crengine XPointer selectors are corrupted (e.g. section/ection/…)
+-- due to a known crengine bug with certain epub structures.
+-- =============================================================================
+
+-- All valid HTML5 element names. Segments not in this set indicate a
+-- corrupted XPath produced by crengine.
+local _HTML_TAGS = {
+    a=true,abbr=true,address=true,area=true,article=true,aside=true,
+    audio=true,b=true,base=true,bdi=true,bdo=true,blockquote=true,
+    body=true,br=true,button=true,canvas=true,caption=true,cite=true,
+    code=true,col=true,colgroup=true,data=true,datalist=true,dd=true,
+    del=true,details=true,dfn=true,dialog=true,div=true,dl=true,dt=true,
+    em=true,embed=true,fieldset=true,figcaption=true,figure=true,
+    footer=true,form=true,h1=true,h2=true,h3=true,h4=true,h5=true,
+    h6=true,head=true,header=true,hr=true,html=true,i=true,iframe=true,
+    img=true,input=true,ins=true,kbd=true,label=true,legend=true,
+    li=true,link=true,main=true,map=true,mark=true,menu=true,meta=true,
+    meter=true,nav=true,noscript=true,object=true,ol=true,optgroup=true,
+    option=true,output=true,p=true,picture=true,pre=true,progress=true,
+    q=true,rp=true,rt=true,ruby=true,s=true,samp=true,script=true,
+    section=true,select=true,small=true,source=true,span=true,
+    strong=true,style=true,sub=true,summary=true,sup=true,table=true,
+    tbody=true,td=true,template=true,textarea=true,tfoot=true,th=true,
+    thead=true,time=true,title=true,tr=true,track=true,u=true,ul=true,
+    var=true,video=true,wbr=true,
+}
+
+-- HTML void elements: never push onto the ancestor stack.
+local _VOID_HTML = {
+    area=true,base=true,br=true,col=true,embed=true,hr=true,
+    img=true,input=true,link=true,meta=true,param=true,
+    source=true,track=true,wbr=true,
+}
+
+-- Block-level tags that directly contain human-readable text.
+-- These are the leaf targets of Readeck XPath selectors.
+local _TEXT_BLOCK_TAGS = {
+    p=true,li=true,h1=true,h2=true,h3=true,h4=true,h5=true,h6=true,
+    blockquote=true,figcaption=true,dd=true,dt=true,td=true,th=true,pre=true,
+}
+
+-- Encode a Unicode codepoint as a UTF-8 byte string.
+local function _cp_to_utf8(cp)
+    if cp < 0x80 then
+        return string.char(cp)
+    elseif cp < 0x800 then
+        return string.char(0xC0 + math.floor(cp/64), 0x80 + cp%64)
+    elseif cp < 0x10000 then
+        return string.char(0xE0 + math.floor(cp/4096),
+                           0x80 + math.floor(cp%4096/64),
+                           0x80 + cp%64)
+    else
+        return string.char(0xF0 + math.floor(cp/262144),
+                           0x80 + math.floor(cp%262144/4096),
+                           0x80 + math.floor(cp%4096/64),
+                           0x80 + cp%64)
+    end
+end
+
+-- Strip all HTML tags and decode common entities from a string.
+local function _html_to_text(s)
+    s = s:gsub("<[^>]+>", "")
+    s = s:gsub("&amp;",  "&")
+    s = s:gsub("&lt;",   "<")
+    s = s:gsub("&gt;",   ">")
+    s = s:gsub("&quot;", '"')
+    s = s:gsub("&apos;", "'")
+    s = s:gsub("&nbsp;", "\xc2\xa0")
+    s = s:gsub("&#(%d+);",  function(d) return _cp_to_utf8(tonumber(d) or 63) end)
+    s = s:gsub("&#x(%x+);", function(h) return _cp_to_utf8(tonumber(h,16) or 63) end)
+    return s
+end
+
+-- Count UTF-8 codepoints in s whose start byte is strictly before byte_end.
+local function _cp_count(s, byte_end)
+    local count = 0
+    local i = 1
+    while i < byte_end and i <= #s do
+        local b = s:byte(i)
+        if     b >= 0xF0 then i = i + 4
+        elseif b >= 0xE0 then i = i + 3
+        elseif b >= 0xC0 then i = i + 2
+        else                  i = i + 1 end
+        count = count + 1
+    end
+    return count
+end
+
+-- Return true if the selector contains a segment whose tag name is not a
+-- valid HTML element name — indicating crengine XPointer corruption.
+local function _selector_has_invalid_tags(sel)
+    if not sel then return false end
+    for part in (sel .. "/"):gmatch("([^/]+)/") do
+        local tag = part:match("^([^%[]+)")
+        if tag and tag ~= "" and not _HTML_TAGS[tag] then
+            return true
+        end
+    end
+    return false
+end
+
+-- Walk an HTML fragment and collect all text-bearing block elements.
+-- Returns a list of { selector = "section[1]/p[2]", text = "plain text" }
+-- where selectors are relative to the root of the provided html fragment.
+local function _collect_text_elements(html)
+    local results   = {}
+    local stack     = {}    -- [{ tag, idx }]
+    local sib       = {{}}  -- sib[depth][tag] = sibling count so far
+    local skip_tag  = nil   -- non-nil while inside <script>/<style>
+    local col_depth = nil   -- stack depth at which collection started
+    local col_start = nil   -- byte index after the opening tag of collected element
+
+    local i = 1
+    local n = #html
+    while i <= n do
+        local lt = html:find("<", i, true)
+        if not lt then break end
+        local gt = html:find(">", lt + 1, true)
+        if not gt then break end
+
+        local inner   = html:sub(lt + 1, gt - 1)
+        local is_cls  = inner:sub(1, 1) == "/"
+        local is_self = inner:sub(-1)   == "/"
+        local raw     = inner:match("^/?([%a][%w%-]*)")
+        local tname   = raw and raw:lower() or nil
+
+        if skip_tag then
+            -- Inside a skipped block: only watch for its closing tag
+            if is_cls and tname == skip_tag then skip_tag = nil end
+        elseif tname == "script" or tname == "style" then
+            if not is_cls and not is_self then skip_tag = tname end
+        elseif is_cls then
+            if tname then
+                -- Check if we should emit a collected element
+                if col_depth ~= nil and #stack == col_depth
+                   and stack[#stack] and stack[#stack].tag == tname
+                   and _TEXT_BLOCK_TAGS[tname] then
+                    local parts = {}
+                    for _, f in ipairs(stack) do
+                        table.insert(parts, f.tag .. "[" .. f.idx .. "]")
+                    end
+                    local el_inner = html:sub(col_start, lt - 1)
+                    local text = _html_to_text(el_inner)
+                    if text ~= "" then
+                        table.insert(results, {
+                            selector = table.concat(parts, "/"),
+                            text     = text,
+                        })
+                    end
+                    col_depth = nil
+                    col_start = nil
+                end
+                -- Pop matching frame (search downwards for robustness)
+                for j = #stack, 1, -1 do
+                    if stack[j].tag == tname then
+                        table.remove(stack, j)
+                        break
+                    end
+                end
+            end
+        elseif not is_self and not _VOID_HTML[tname] and tname then
+            -- Opening tag: push onto stack
+            local depth = #stack + 1
+            if not sib[depth] then sib[depth] = {} end
+            sib[depth][tname] = (sib[depth][tname] or 0) + 1
+            sib[depth + 1] = {}  -- reset grandchildren counters
+            table.insert(stack, { tag = tname, idx = sib[depth][tname] })
+            -- Start collecting if this is a text container and we aren't already
+            if _TEXT_BLOCK_TAGS[tname] and col_depth == nil then
+                col_depth = depth
+                col_start = gt + 1
+            end
+        end
+
+        i = gt + 1
+    end
+
+    return results
+end
+
+-- Search the epub HTML for a highlight text snippet.
+-- Searches within <main> to match Readeck's XPath root.
+-- Returns start_selector, start_offset, end_selector, end_offset  (all relative
+-- to <main>), or nil if the text cannot be located.
+-- Offsets are Unicode codepoint counts from the start of the element's text.
+local function _find_pos_by_text(html, highlight_text)
+    if not html or not highlight_text or highlight_text == "" then return nil end
+
+    -- Work inside <main> so generated selectors match Readeck's XPath root
+    local content = _find_element_inner_html(html, "main")
+    if not content then
+        Log:warn("_find_pos_by_text: no <main> element, using full HTML")
+        content = html
+    end
+
+    local needle = highlight_text:match("^%s*(.-)%s*$")
+    if not needle or needle == "" then return nil end
+
+    local elements = _collect_text_elements(content)
+
+    -- Try the full text first, then a 30-char prefix for highlights that span
+    -- element boundaries (rare) or contain entities that decode differently.
+    local searches = { needle }
+    if #needle > 30 then table.insert(searches, needle:sub(1, 30)) end
+
+    for _, search in ipairs(searches) do
+        for _, el in ipairs(elements) do
+            local idx = el.text:find(search, 1, true)
+            if idx then
+                local s_off = _cp_count(el.text, idx)
+                local e_off = _cp_count(el.text, idx + #needle)
+                Log:info("_find_pos_by_text: resolved '", needle:sub(1, 40),
+                         "' → selector:", el.selector,
+                         "offsets:", s_off, "–", e_off)
+                return el.selector, s_off, el.selector, e_off
+            end
+        end
+    end
+
+    Log:warn("_find_pos_by_text: could not locate:", needle:sub(1, 50))
+    return nil
+end
+
+-- Parse a KOReader XPointer string into its components.
+-- Input:  "/body/DocFragment/body/main/section/p[1]/text()[2].176"
+-- Output: element_selector ("section/p[1]"), text_node_idx (2), char_offset (176)
+-- Also handles /text().N (no index → index 1) and bare element.N paths.
+local function _parse_koreader_xptr(xptr)
+    if not xptr then return nil end
+
+    Log:debug("_parse_koreader_xptr raw input:", xptr)
+
+    -- Strip the KOReader crengine prefix up to and including "/body/main/".
+    -- Crengine xpointers always start with /body/DocFragment[N]/body/main/
+    -- (the [N] index is optional). We use explicit find+sub rather than
+    -- gsub to avoid any pattern-matching surprises with the path characters.
+    local s = xptr
+    local main_marker = "/body/main/"
+    local main_start = s:find(main_marker, 1, true)  -- plain search, no patterns
+    if main_start then
+        s = s:sub(main_start + #main_marker)
+    end
+
+    Log:debug("_parse_koreader_xptr after strip:", s)
+
+    -- Case 1: ends with /text()[N].offset  (e.g. "section/p[1]/text()[2].176")
+    local sel, tn, off = s:match("^(.*)/text%(%)%[(%d+)%]%.(%d+)$")
+    if sel then
+        Log:debug("_parse_koreader_xptr case1 sel:", sel, "tn:", tn, "off:", off)
+        return sel, tonumber(tn), tonumber(off)
+    end
+
+    -- Case 2: ends with /text().offset  (e.g. "section/p[1]/text().176")
+    sel, off = s:match("^(.*)/text%(%)%.(%d+)$")
+    if sel then
+        Log:debug("_parse_koreader_xptr case2 sel:", sel, "off:", off)
+        return sel, 1, tonumber(off)
+    end
+
+    -- Case 3: plain element.offset (no text() node — rare)
+    sel, off = s:match("^(.+)%.(%d+)$")
+    if sel then
+        Log:debug("_parse_koreader_xptr case3 sel:", sel, "off:", off)
+        return sel, 1, tonumber(off)
+    end
+
+    Log:warn("_parse_koreader_xptr: unrecognised format:", xptr)
+    return nil
+end
+
+-- Resolve a KOReader pos string to a (selector, absolute_offset) pair
+-- compatible with the Readeck annotation API.
+-- epub_path is used to read the epub HTML when the text-node index > 1.
+-- Returns selector string and integer offset, or nil on failure.
+local function _resolve_pos(pos, epub_path)
+    local sel, tn_idx, local_off = _parse_koreader_xptr(pos)
+    if not sel then return nil end
+
+    if tn_idx == 1 then
+        -- First text node always starts at the element boundary — offset is correct as-is.
+        return sel, local_off
+    end
+
+    -- For text node N > 1 we need to know how many characters precede it
+    -- in the element's total text content.  Read the epub HTML to find out.
+    if not epub_path then
+        Log:warn("_resolve_pos: text()[", tn_idx, "] needs epub HTML but no path given; using raw offset")
+        return sel, local_off
+    end
+
+    local html = _epub_get_html(epub_path)
+    if not html then
+        Log:warn("_resolve_pos: could not read epub HTML from", epub_path, "; using raw offset")
+        return sel, local_off
+    end
+
+    local inner = _find_element_inner_html(html, sel)
+    if not inner then
+        Log:warn("_resolve_pos: element", sel, "not found in epub HTML; using raw offset")
+        return sel, local_off
+    end
+
+    local abs_off = _compute_element_offset(inner, tn_idx, local_off)
+    Log:debug("_resolve_pos:", sel, "text()[" .. tn_idx .. "]." .. local_off, "→", abs_off)
+    return sel, abs_off
+end
+
+-- =============================================================================
+-- Highlight comparison helpers (unchanged logic, uses resolved selectors)
+-- =============================================================================
+
+-- Strip any residual text-node suffix from server-side selectors
+-- (server selectors normally don't have them, but be defensive).
+local function _clean_server_selector(selector)
     if not selector then return "" end
-    -- Removes KOReader-specific prefixes from the XPath
-    return selector:gsub("/body/DocFragment/body/main/", ""):gsub("/text%(%)$", "")
+    return selector:gsub("/text%(%)%[?%d*%]?$", "")
 end
 
 local function _normalize_highlight_selector(selector)
     if not selector then return "" end
-
-    -- Canonicalize XPath by adding [1] to segments without predicates.
-    -- e.g., "section/p[2]" becomes "section[1]/p[2]".
-    -- This makes server selectors ("section/p[2]") comparable to
-    -- client selectors ("section[1]/p[2]").
     local parts = {}
     for part in util.gsplit(selector, "/") do
         if part ~= "" then
-            -- Add [1] if it's a tag without a predicate
-            if not part:find("%[") then
-                part = part .. "[1]"
-            end
+            if not part:find("%[") then part = part .. "[1]" end
             table.insert(parts, part)
         end
     end
-    local canonical_selector = table.concat(parts, "/")
-
-    -- Pad numbers in XPath indices with zeros for correct lexicographical sorting
-    return canonical_selector:gsub("%[(%d+)%]", function(d)
+    local canonical = table.concat(parts, "/")
+    return canonical:gsub("%[(%d+)%]", function(d)
         return string.format("[%05d]", tonumber(d))
     end)
 end
 
 local function _compare_highlight_points(s1, o1, s2, o2)
-    local norm_s1 = _normalize_highlight_selector(s1)
-    local norm_s2 = _normalize_highlight_selector(s2)
-
-    if norm_s1 < norm_s2 then return -1 end
-    if norm_s1 > norm_s2 then return 1 end
-
-    -- selectors are effectively equal, compare offsets
+    local n1 = _normalize_highlight_selector(s1)
+    local n2 = _normalize_highlight_selector(s2)
+    if n1 < n2 then return -1 end
+    if n1 > n2 then return  1 end
     if o1 < o2 then return -1 end
-    if o1 > o2 then return 1 end
+    if o1 > o2 then return  1 end
     return 0
 end
 
 local function _highlights_overlap(h1, h2)
-    -- h1 is the local highlight (start/end points are pre-ordered).
-    -- h2 is the remote highlight.
-
-    -- Defensive check for malformed highlight objects from the server
-    if not (h2 and h2.start_selector and h2.end_selector and h2.start_offset and h2.end_offset) then
-        Log:warn("Cannot compare with an incomplete remote highlight object. Assuming no overlap.")
+    if not (h2 and h2.start_selector and h2.end_selector
+            and h2.start_offset ~= nil and h2.end_offset ~= nil) then
+        Log:warn("Cannot compare with incomplete remote highlight. Assuming no overlap.")
         return false
     end
-
-    -- Clean and order points for the remote highlight (h2)
+    local cs1 = _clean_server_selector(h2.start_selector)
+    local cs2 = _clean_server_selector(h2.end_selector)
     local h2_start_s, h2_start_o, h2_end_s, h2_end_o
-    local clean_s1, clean_s2 = _clean_highlight_selector(h2.start_selector), _clean_highlight_selector(h2.end_selector)
-    if _compare_highlight_points(clean_s1, h2.start_offset, clean_s2, h2.end_offset) <= 0 then
-        h2_start_s, h2_start_o, h2_end_s, h2_end_o = clean_s1, h2.start_offset, clean_s2, h2.end_offset
+    if _compare_highlight_points(cs1, h2.start_offset, cs2, h2.end_offset) <= 0 then
+        h2_start_s, h2_start_o, h2_end_s, h2_end_o = cs1, h2.start_offset, cs2, h2.end_offset
     else
-        h2_start_s, h2_start_o, h2_end_s, h2_end_o = clean_s2, h2.end_offset, clean_s1, h2.start_offset
+        h2_start_s, h2_start_o, h2_end_s, h2_end_o = cs2, h2.end_offset, cs1, h2.start_offset
     end
-
-    -- Overlap check: start1 < end2 AND start2 < end1
-    local start1_before_end2 = _compare_highlight_points(h1.start_selector, h1.start_offset, h2_end_s, h2_end_o) < 0
-    local start2_before_end1 = _compare_highlight_points(h2_start_s, h2_start_o, h1.end_selector, h1.end_offset) < 0
-
-    return start1_before_end2 and start2_before_end1
+    local s1_before_e2 = _compare_highlight_points(h1.start_selector, h1.start_offset, h2_end_s,   h2_end_o)   < 0
+    local s2_before_e1 = _compare_highlight_points(h2_start_s, h2_start_o, h1.end_selector, h1.end_offset) < 0
+    return s1_before_e2 and s2_before_e1
 end
 
-local ALLOWED_HIGHLIGHT_COLORS = { red = true, green = true, blue = true, yellow = true }
-local function _build_highlight_payload(h)
-    -- We are only interested in highlights, not other kinds of annotations.
+-- =============================================================================
+-- Payload builder
+-- =============================================================================
+
+-- Allowed highlight colours (transparent added in Readeck 0.22.2).
+local ALLOWED_HIGHLIGHT_COLORS = {
+    red = true, green = true, blue = true, yellow = true, transparent = true,
+}
+
+-- Build the JSON payload for one KOReader annotation.
+-- epub_path (optional) is used to resolve text-node offsets for N > 1,
+-- and as a fallback when crengine XPointer selectors are corrupted.
+-- Returns a table ready for JSON encoding, or nil if the annotation should be skipped.
+local function _build_highlight_payload(h, epub_path)
+    -- Only process actual highlights (drawer field present)
     if not h.drawer then return nil end
 
-    local start_selector, start_offset = h.pos0:match("(.*)%.(%d+)")
-    local end_selector, end_offset = h.pos1:match("(.*)%.(%d+)")
+    -- Resolve start and end positions using the epub HTML when available.
+    local start_sel, s_off = _resolve_pos(h.pos0, epub_path)
+    local end_sel,   e_off = _resolve_pos(h.pos1, epub_path)
 
-    if not (start_selector and start_offset and end_selector and end_offset) then return nil end
+    -- If the selector contains invalid HTML tags (crengine XPointer corruption,
+    -- e.g. "section/ection/..."), fall back to locating the text directly in the
+    -- epub HTML and rebuilding a correct selector from there.
+    if start_sel and _selector_has_invalid_tags(start_sel)
+       and epub_path and h.text and h.text ~= "" then
+        Log:warn("_build_highlight_payload: corrupted selector detected:", start_sel,
+                 "— attempting text-based position recovery for:", h.text:sub(1, 50))
+        local html = _epub_get_html(epub_path)
+        if html then
+            local ss, so, es, eo = _find_pos_by_text(html, h.text)
+            if ss then
+                start_sel, s_off = ss, so
+                end_sel,   e_off = es, eo
+            else
+                Log:warn("_build_highlight_payload: text-based recovery failed, skipping highlight")
+                return nil
+            end
+        end
+    end
 
-    local s_offset = tonumber(start_offset)
-    local e_offset = tonumber(end_offset)
+    if not (start_sel and s_off ~= nil and end_sel and e_off ~= nil) then
+        Log:warn("_build_highlight_payload: could not parse pos for highlight:", h.text)
+        return nil
+    end
 
-    start_selector = _clean_highlight_selector(start_selector)
-    end_selector = _clean_highlight_selector(end_selector)
+    -- Final safety check: reject if selector is still invalid after fallback
+    if _selector_has_invalid_tags(start_sel) or _selector_has_invalid_tags(end_sel) then
+        Log:warn("_build_highlight_payload: selector still invalid after fallback, skipping:", start_sel)
+        return nil
+    end
 
-    -- Ensure start point is before end point for comparison logic
-    if _compare_highlight_points(start_selector, s_offset, end_selector, e_offset) > 0 then
-        start_selector, end_selector = end_selector, start_selector
-        s_offset, e_offset = e_offset, s_offset
+    -- Ensure start comes before end (crengine may store them either way)
+    if _compare_highlight_points(start_sel, s_off, end_sel, e_off) > 0 then
+        start_sel, end_sel = end_sel, start_sel
+        s_off,     e_off   = e_off,   s_off
     end
 
     local color = (h.color and ALLOWED_HIGHLIGHT_COLORS[h.color]) and h.color or "yellow"
 
-    return { text = h.text, color = color, start_selector = start_selector, start_offset = s_offset, end_selector = end_selector, end_offset = e_offset }
+    return {
+        text           = h.text,
+        color          = color,
+        start_selector = start_sel,
+        start_offset   = s_off,
+        end_selector   = end_sel,
+        end_offset     = e_off,
+        type           = "highlight",
+        note           = h.note or "",
+    }
+end
+
+-- Core highlight export logic for a single article.
+-- article_id: Readeck bookmark ID string
+-- annotations: table of KOReader annotation objects (same format as DocSettings "annotations")
+-- epub_path: path to the epub file on disk (used to resolve text-node offsets)
+-- quiet: if true, suppresses error popups
+-- Returns success_count, error_count, skipped_count, or nil, err_string on failure.
+function Readeck:exportHighlightsForArticle(article_id, annotations, epub_path, quiet)
+    -- Fetch existing highlights from server to check for overlaps
+    local existing_highlights_raw, err = self:callAPI("GET", "/api/bookmarks/" .. article_id .. "/annotations", nil, "", "", true)
+    local existing_highlights = {}
+    if err then
+        if err == "auth_pending" then
+            return nil, "auth_pending"
+        end
+        if not quiet then
+            UIManager:show(InfoMessage:new{ text = _("Could not fetch existing highlights from Readeck. Aborting export.") })
+        end
+        return nil, err
+    end
+    if existing_highlights_raw and type(existing_highlights_raw) == "table" then
+        existing_highlights = existing_highlights_raw
+    end
+
+    local success_count = 0
+    local error_count = 0
+    local skipped_count = 0
+
+    for _, h in pairs(annotations) do
+        local local_highlight = _build_highlight_payload(h, epub_path)
+
+        if local_highlight then
+            local is_overlapping = false
+            for _, remote_h in ipairs(existing_highlights) do
+                if _highlights_overlap(local_highlight, remote_h) then
+                    is_overlapping = true
+                    break
+                end
+            end
+
+            if is_overlapping then
+                skipped_count = skipped_count + 1
+                Log:info("Skipping overlapping highlight:", local_highlight.text)
+            else
+                local bodyJSON = JSON.encode(local_highlight)
+                Log:debug("Start selector:", local_highlight.start_selector, "End selector:", local_highlight.end_selector)
+                local headers = {
+                    ["Content-type"] = "application/json",
+                    ["Accept"] = "application/json, */*",
+                    ["Content-Length"] = tostring(#bodyJSON),
+                    ["Authorization"] = "Bearer " .. self.access_token,
+                }
+                local result = self:callAPI("POST", "/api/bookmarks/" .. article_id .. "/annotations", headers, bodyJSON, "")
+                if result then
+                    success_count = success_count + 1
+                    -- Add to existing list to prevent sending another local highlight
+                    -- that overlaps with this newly created one.
+                    table.insert(existing_highlights, local_highlight)
+                else
+                    error_count = error_count + 1
+                end
+            end
+        end
+    end
+
+    return success_count, error_count, skipped_count
 end
 
 function Readeck:exportHighlights()
@@ -2477,67 +3134,18 @@ function Readeck:exportHighlights()
         return false
     end
 
-    -- Fetch existing highlights to check for overlaps
-    local existing_highlights_raw, err = self:callAPI("GET", "/api/bookmarks/" .. article_id .. "/annotations", nil, "", "", true)
-    local existing_highlights = {}
-    if err then
-        if err == "auth_pending" then
-            return false
-        end
-        UIManager:show(InfoMessage:new{ text = _("Could not fetch existing highlights from Readeck. Aborting export.") })
-        return
-    end
-    if existing_highlights_raw and type(existing_highlights_raw) == "table" then
-        existing_highlights = existing_highlights_raw
-    end
-
     -- The highlights are in the annotation module of the reader UI.
-    local highlights = self.ui.view.ui.annotation.annotations
+    local annotations = self.ui.view.ui.annotation.annotations
 
-    if not highlights or not next(highlights) then
+    if not annotations or not next(annotations) then
         UIManager:show(InfoMessage:new{ text = _("No highlights found in this document.") })
         return
     end
 
-    local success_count = 0
-    local error_count = 0
-    local skipped_count = 0
-
-    for _, h in pairs(highlights) do
-        local local_highlight = _build_highlight_payload(h)
-
-        if local_highlight then
-            local is_overlapping = false
-            for _, remote_h in ipairs(existing_highlights) do
-                if _highlights_overlap(local_highlight, remote_h) then
-                    is_overlapping = true
-                    break
-                end
-            end
-
-            if is_overlapping then
-                skipped_count = skipped_count + 1
-                Log:info("Skipping overlapping highlight:", local_highlight.text)
-            else
-                local bodyJSON = JSON.encode(local_highlight)
-                Log:debug("Start selector:", local_highlight.start_selector, "End selector:", local_highlight.end_selector)
-                local headers = {
-                    ["Content-type"] = "application/json",
-                    ["Accept"] = "application/json, */*",
-                    ["Content-Length"] = tostring(#bodyJSON),
-                    ["Authorization"] = "Bearer " .. self.access_token,
-                }
-
-                local result = self:callAPI("POST", "/api/bookmarks/" .. article_id .. "/annotations", headers, bodyJSON, "")
-                if result then
-                    success_count = success_count + 1
-                    -- Add to existing highlights to prevent sending another local highlight that overlaps with this new one.
-                    table.insert(existing_highlights, local_highlight)
-                else
-                    error_count = error_count + 1
-                end
-            end
-        end
+    local success_count, error_count, skipped_count = self:exportHighlightsForArticle(article_id, annotations, document.file)
+    if not success_count then
+        -- auth_pending or network error already handled inside
+        return
     end
 
     local message_parts = {}
@@ -2558,6 +3166,80 @@ function Readeck:exportHighlights()
         message = _("Finished exporting highlights. No new highlights to export.")
     end
     UIManager:show(InfoMessage:new{ text = message })
+end
+
+-- Export highlights for ALL articles in the download directory.
+-- Iterates over epub files, reads their KOReader sidecar annotations via DocSettings,
+-- and posts any new highlights to Readeck. Does not require a document to be open.
+-- Returns total_success, total_error, total_skipped counts.
+function Readeck:exportAllHighlights()
+    if not self.directory or self.directory == "" then
+        Log:warn("No download directory configured, skipping batch highlight export")
+        return 0, 0, 0
+    end
+
+    local total_success = 0
+    local total_error = 0
+    local total_skipped = 0
+    local articles_processed = 0
+
+    for entry in lfs.dir(self.directory) do
+        if entry ~= "." and entry ~= ".." then
+            local entry_path = self.directory .. "/" .. entry
+            -- Only process epub files that have a sidecar (i.e. have been opened at least once)
+            if entry_path:match("%.epub$") and DocSettings:hasSidecarFile(entry_path) then
+                local article_id = self:getArticleID(entry_path)
+                if article_id then
+                    local doc_settings = DocSettings:open(entry_path)
+                    local annotations = doc_settings:readSetting("annotations")
+                    -- Check there is at least one actual highlight (drawer field marks highlights)
+                    local has_highlight = false
+                    if annotations then
+                        for _, h in pairs(annotations) do
+                            if h.drawer then has_highlight = true; break end
+                        end
+                    end
+                    if has_highlight then
+                        articles_processed = articles_processed + 1
+                        Log:info("Batch export: processing highlights for article", article_id, "-", entry)
+                        local s, e, sk = self:exportHighlightsForArticle(article_id, annotations, entry_path, true)
+                        if s then
+                            total_success  = total_success  + s
+                            total_error    = total_error    + e
+                            total_skipped  = total_skipped  + sk
+                        else
+                            Log:warn("Batch export: failed for article", article_id, e)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    Log:info("Batch highlight export complete:", articles_processed, "articles processed,",
+             total_success, "exported,", total_error, "failed,", total_skipped, "skipped")
+    return total_success, total_error, total_skipped
+end
+
+--[[
+Full synchronisation: exports all pending highlights for every article in the
+download folder, then runs the standard article sync (download new articles,
+process local deletions, etc.).
+
+This replaces the old sync() stub that incorrectly called downloadAll().
+]]
+function Readeck:sync()
+    -- 1. Export highlights for all local articles before downloading new ones.
+    if self.directory and self.directory ~= "" then
+        local info = InfoMessage:new{ text = _("Exporting highlights…") }
+        UIManager:show(info)
+        UIManager:forceRePaint()
+        UIManager:close(info)
+        local s, e, sk = self:exportAllHighlights()
+        Log:info("Highlights sync:", s, "exported,", e, "failed,", sk, "skipped")
+    end
+    -- 2. Download new/updated articles and sync deletions.
+    return self:synchronize()
 end
 
 function Readeck:editTimeoutSettings()

@@ -1,5 +1,15 @@
 <div align="center">
 
+# ⚠️ This fork is dedicated to 	readeck 0.22.2
+
+>>>
+### What's new ?
+
+Readeck 0.22.2 embeds new highlights (with "note", transparent color, and.... New xHTML parsing). So we got this fixed.
+Btw we brought some news to make this plugin awesome again : "Readeck retrieval" is now "Readeck sync-it better !" and it sends highlights from all articles to your server.
+*Made with Claude Sonnet 4.6*
+>>>
+
 # 📚 Readeck Plugin for KOReader
 
 ![](https://img.shields.io/badge/Maintained%20with-GitHub%20Copilot-blue?logo=githubcopilot)  <a title="hits" target="_blank" href="https://github.com/iceyear/readeck.koplugin"><img src="https://hits.b3log.org/iceyear/readeck.koplugin.svg" ></a> ![GitHub contributors](https://img.shields.io/github/contributors/iceyear/readeck.koplugin) ![GitHub License](https://img.shields.io/github/license/iceyear/readeck.koplugin)
