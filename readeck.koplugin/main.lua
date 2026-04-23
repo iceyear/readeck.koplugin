@@ -116,6 +116,7 @@ function Readeck:init()
     self.filter_tag = ""
     self.sort_param = "-created"  -- default to most recent first
     self.ignore_tags = ""
+    self.priority_tags = ""
     self.auto_tags = ""
     self.articles_per_sync = 30  -- max number of articles to get metadata for
     self.sort_options = {
@@ -187,6 +188,9 @@ function Readeck:init()
     end
     if self.rd_settings.data.readeck.ignore_tags then
         self.ignore_tags = self.rd_settings.data.readeck.ignore_tags
+    end
+    if self.rd_settings.data.readeck.priority_tags then
+        self.priority_tags = self.rd_settings.data.readeck.priority_tags
     end
     if self.rd_settings.data.readeck.auto_tags then
         self.auto_tags = self.rd_settings.data.readeck.auto_tags
@@ -395,6 +399,25 @@ function Readeck:addToMainMenu(menu_items)
                                 self.ignore_tags,
                                 function(tags)
                                     self.ignore_tags = tags
+                                end
+                            )
+                        end,
+                    },
+                    {
+                        text_func = function()
+                            if not self.priority_tags or self.priority_tags == "" then
+                                return _("Priority tags")
+                            end
+                            return T(_("Priority tags (%1)"), self.priority_tags)
+                        end,
+                        keep_menu_open = true,
+                        callback = function(touchmenu_instance)
+                            self:setTagsDialog(touchmenu_instance,
+                                _("Priority tags"),
+                                _("Enter a comma-separated list of tags for priority articles to download first"),
+                                self.priority_tags,
+                                function(tags)
+                                    self.priority_tags = tags
                                 end
                             )
                         end,
@@ -1425,17 +1448,66 @@ function Readeck:getArticleList()
         sorting = "&sort=" .. self.sort_param
     end
 
+    -- 检查是否有优先标签且未启用独占过滤
+    local has_priority = self.priority_tags and self.priority_tags ~= ""
+    local exclusive_filter = (filtering ~= "")
+
+    local article_list = {}
+    local processed_ids = {}  -- 跟踪已处理的文章ID，避免重复
+
+    -- 第一步：如果定义了优先标签且没有启用独占过滤，先获取优先文章
+    if has_priority and not exclusive_filter then
+        local priority_tags_list = self:splitTags(self.priority_tags)
+        local remaining = self.articles_per_sync
+
+        for _, priority_tag in ipairs(priority_tags_list) do
+            if remaining <= 0 then break end
+
+            local priority_filtering = "&labels=" .. priority_tag
+            local priority_articles = self:fetchArticlesLimited(priority_filtering, sorting, remaining)
+
+            -- 将优先文章添加到列表中（避免重复）
+            for _, article in ipairs(priority_articles) do
+                if not processed_ids[article.id] then
+                    table.insert(article_list, article)
+                    processed_ids[article.id] = true
+                    remaining = remaining - 1
+                end
+            end
+        end
+    end
+
+    -- 第二步：如果还需要更多文章，获取剩余文章
+    local remaining_needed = self.articles_per_sync - #article_list
+    if remaining_needed > 0 then
+        local other_articles = self:fetchArticlesLimited(filtering, sorting, remaining_needed, processed_ids)
+
+        for _, article in ipairs(other_articles) do
+            if #article_list >= self.articles_per_sync then
+                break
+            end
+            if not processed_ids[article.id] then
+                table.insert(article_list, article)
+                processed_ids[article.id] = true
+            end
+        end
+    end
+
+    return article_list
+end
+
+-- 辅助函数：获取有限数量的文章
+function Readeck:fetchArticlesLimited(filtering, sorting, max_count, exclude_ids)
+    exclude_ids = exclude_ids or {}
     local article_list = {}
     local offset = 0
-    local limit = math.min(self.articles_per_sync, 30)  -- 服务器默认每页数量是30
+    local limit = math.min(self.articles_per_sync, 30)
 
-    -- 从服务器获取文章列表，直到达到目标数量
-    while #article_list < self.articles_per_sync do
-        -- 获取包含文章列表的JSON
-        local articles_url = "/api/bookmarks?limit=" .. limit  -- 修改文章列表路径，添加 /api 前缀
+    while #article_list < max_count do
+        local articles_url = "/api/bookmarks?limit=" .. limit
                           .. "&offset=" .. offset
-                          .. "&is_archived=0"  -- 只获取未归档的文章
-                          .. "&type=article" -- No sense downloading videos, but maybe photos
+                          .. "&is_archived=0"
+                          .. "&type=article"
                           .. filtering
                           .. sorting
 
@@ -1443,51 +1515,57 @@ function Readeck:getArticleList()
         local articles_json, err, code = self:callAPI("GET", articles_url, nil, "", "", true)
 
         if err == "http_error" and code == 404 then
-            -- 可能已经到了最后一页，没有更多文章了
             Log:debug("Couldn't get offset", offset)
-            break -- 退出循环
+            break
         elseif err == "auth_pending" then
             Log:info("OAuth authorization started while requesting article list")
-            return nil, err
+            return article_list
         elseif err or articles_json == nil then
-            -- 发生了其他错误，不继续下载或删除文章
             Log:warn("Download at offset", offset, "failed with", err, code)
             UIManager:show(InfoMessage:new{
                 text = _("Requesting article list failed."), })
-            return
+            return article_list
         end
 
-        -- 只关注JSON中的实际文章
-        -- 构建一个数组，以便稍后更容易地操作
+        -- 应用忽略标签过滤器
         local new_article_list = {}
         for _, article in ipairs(articles_json) do
             table.insert(new_article_list, article)
         end
-
-        local pending_articles = #new_article_list >= limit
-
-        -- 应用过滤器
         new_article_list = self:filterIgnoredTags(new_article_list)
 
-        -- 将过滤后的列表追加到最终的文章列表中
+        -- 添加文章到结果列表，排除已处理的
+        local added_count = 0
         for _, article in ipairs(new_article_list) do
-            if #article_list == self.articles_per_sync then
-                Log:debug("Hit the article target", self.articles_per_sync)
-                break
+            if not exclude_ids[article.id] and #article_list < max_count then
+                table.insert(article_list, article)
+                added_count = added_count + 1
             end
-            table.insert(article_list, article)
         end
 
-        if not pending_articles then
-            -- 服务器返回的文章数量小于请求的数量，说明没有更多文章了
-            Log:debug("No more articles to query")
+        -- 如果返回的文章少于限制，说明没有更多文章了
+        if #new_article_list < limit then
             break
         end
-        
+
         offset = offset + limit
     end
 
     return article_list
+end
+
+--- Split a comma-separated string of tags into a table.
+-- @string tags_str comma-separated tags
+-- @treturn table array of trimmed tag strings
+function Readeck:splitTags(tags_str)
+    local tags = {}
+    if not tags_str or tags_str == "" then
+        return tags
+    end
+    for tag in util.gsplit(tags_str, "[,]+", false) do
+        table.insert(tags, tag)
+    end
+    return tags
 end
 
 --- Remove all the articles from the list containing one of the ignored tags.
@@ -2269,6 +2347,7 @@ function Readeck:saveSettings()
         filter_tag            = self.filter_tag,
         sort_param            = self.sort_param,
         ignore_tags           = self.ignore_tags,
+        priority_tags         = self.priority_tags,
         auto_tags             = self.auto_tags,
         is_delete_finished    = self.is_delete_finished,
         is_delete_read        = self.is_delete_read,
