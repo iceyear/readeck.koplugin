@@ -42,6 +42,7 @@ This is a cozy project, and I hope it can remain one — with the community’s 
 
 ## 🌟 Features
 
+* 🚨 **Tag priority**: Choose tags you want to read in priority, but non-exclusive like filtering.
 * 🔄 **Sync & Download**: Download articles from your Readeck server to a dedicated folder on your KOReader device.
 * 🏷️ **Tag Filtering**: Only download articles with a specific tag, ignore articles with certain tags, and auto-add tags to newly created bookmarks.
 * ↕️ **Sorting**: Sort server articles by added/published date, duration, site name, or title.
@@ -138,6 +139,7 @@ If you are offline:
 
 * **Only download articles with tag**: Only download entries with a specific label
 * **Tags to ignore**: Skip entries containing any of the specified tags
+* **Priority tags**: Always download first articles from these tags.
 * **Tags to add to new articles**: Auto-label newly added bookmarks (including links added from KOReader)
 
 ### Sorting & Sync Limits
