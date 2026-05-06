@@ -18,7 +18,7 @@ Readeck Plugin for KOReader is a plugin that allows you to synchronize articles 
 
 This project started as a **personal, self‑use plugin**, rapidly prototyped with AI assistance (GitHub Copilot). Thanks to valuable feedback and contributions from the community, it has gradually grown into something useful for more people.
 
-The plugin is functional and actively used, but it may not work perfectly in every scenario. The current implementation also lives in a single, rather “heroic” Lua file, which leaves room for future refactoring and improvement.
+The plugin is functional and actively used, but it may not work perfectly in every scenario. The implementation is being moved toward smaller Lua modules with tests and formatting/lint checks.
 
 Due to limited personal time, my focus going forward will mainly be on **maintenance, stability, and critical bug fixes**.
 
@@ -35,12 +35,16 @@ This is a cozy project, and I hope it can remain one — with the community’s 
 * 🔄 **Sync & Download**: Download articles from your Readeck server to a dedicated folder on your KOReader device.
 * 🏷️ **Tag Filtering**: Only download articles with a specific tag, ignore articles with certain tags, and auto-add tags to newly created bookmarks.
 * ↕️ **Sorting**: Sort server articles by added/published date, duration, site name, or title.
-* 🗑️ **Smart Deletion / Archiving**: Optionally delete or archive finished/100%-read articles on the server, and clean up local files accordingly.
+* 🗄️ **Completion Actions**: Optionally archive or delete finished/100%-read articles in Readeck, and remove local files only after the server action succeeds.
 * 🧾 **History Cleanup**: Optionally remove finished/fully-read Readeck documents from KOReader history.
 * 🌐 **Add to Readeck (with Queue)**: Add links from KOReader; if offline, links are stored in a queue and retried next time you’re online.
 * 📝 **Review → Tags**: Write comma-separated tags in the **Review** field and send them back to Readeck as labels.
 * ⭐ **Star / Like Sync**: Optionally mark entries as liked on Readeck based on your KOReader star rating threshold, and/or label entries with their star rating (e.g. `3-star`).
-* 🖍️ **Highlight Export**: Export KOReader highlights to Readeck as annotations (with overlap detection to avoid duplicates).
+* 🖍️ **Highlight Export**: Export KOReader highlights and notes to Readeck annotations, manually, before sync, and/or when closing a document.
+* 🕒 **Metadata Sync**: Set downloaded file timestamps from Readeck metadata and add estimated reading time as a KOReader keyword.
+* 🔁 **Periodic Sync**: Optionally let KOReader schedule recurring Readeck syncs while the app is running.
+* ⚡ **Cooperative Downloads**: Download articles through a bounded async queue. Concurrency is configurable from 1 to 3 so slower devices can stay responsive.
+* 🌍 **Plugin i18n Fallbacks**: Reuse KOReader gettext when available, then fall back to plugin-provided English/Chinese strings.
 
 ## 📥 Installation
 
@@ -62,9 +66,8 @@ To use this plugin, you need:
 2. Enter the server URL (without `/api`)
 3. Choose one authentication method:
 
-   * **OAuth (Device Flow)** (recommended for convenience), or
-   * **API Token**, or
-   * **Username / Password** (legacy fallback; used to obtain an access token)
+   * **OAuth (Device Flow)** (recommended for convenience; used when the server advertises OAuth support), or
+   * **API Token**
 4. Set a dedicated **Download folder**
 5. (Optional) Configure:
 
@@ -80,15 +83,15 @@ To use this plugin, you need:
 1. Go to **Main Menu > Readeck > Synchronize articles with server**
 2. Articles will be downloaded according to your tag filter / ignore settings
 
-> Tip: If **Process deletions when downloading** is enabled, deletions/archiving can be handled automatically during sync.
+> Tip: If **Process completion actions when syncing** is enabled, archiving/deleting in Readeck can be handled automatically during sync.
 
 ### Marking Articles as Finished
 
 When you finish reading an article:
 
 1. Mark it as finished (e.g., set status to **complete**) and/or read it to **100%**
-2. Go to **Main Menu > Readeck > Delete finished articles remotely**
-3. The plugin will archive/delete entries according to your settings, and remove local files as needed
+2. Go to **Main Menu > Readeck > Process finished/read articles**
+3. The plugin will apply your configured completion action, export highlights first, and remove local files only after Readeck confirms the action
 
 ### Adding Articles
 
@@ -106,23 +109,23 @@ If you are offline:
 
 1. Open a downloaded Readeck article in KOReader
 2. Go to **Main Menu > Readeck > Export highlights to server**
-3. Highlights will be uploaded to Readeck as annotations (duplicates are skipped if they overlap)
+3. Highlights and notes will be uploaded to Readeck as annotations (duplicates are skipped if they overlap)
 
 ## ⚠️ Notes
 
 * The download directory should be exclusively used by the Readeck plugin; existing files in it may be deleted
-* Using an API token is more secure and reliable than username/password authentication
+* Username/password login is no longer supported; use OAuth or an API token
 * The **Send review as tags** option allows you to add tags while reading
 
 ## 🔧 Advanced Settings
 
-### Article Deletion Options
+### Completion Action Options
 
-* **Remotely delete finished articles**: Delete/archive entries marked as finished
-* **Remotely delete 100% read articles**: Delete/archive entries that reached 100% progress
-* **Mark as archived instead of deleting**: Archive entries instead of permanently deleting them
-* **Process deletions when downloading**: Handle deletions automatically during sync
-* **Synchronize remotely deleted files**: Remove local files that were deleted on the server
+* **Process finished articles in Readeck**: Process entries marked as finished
+* **Process 100% read articles in Readeck**: Process entries that reached 100% progress
+* **Archive completion actions instead of deleting**: Archive entries instead of permanently deleting them
+* **Process completion actions when syncing**: Run completion actions automatically during sync
+* **Remove local files missing from Readeck**: Remove local files that no longer exist on the server
 
 ### Tag Settings
 
@@ -134,6 +137,8 @@ If you are offline:
 
 * **Sort articles by**: Choose the server-side ordering (added/published/duration/site/title)
 * **Number of articles to download per sync**: Limit how many entries are processed per sync run
+* **Concurrent downloads**: Choose how many article downloads run at once. Use `1` for the safest behavior on very slow devices, or `2-3` when the device and server can handle it.
+* **Periodic sync**: Enable a KOReader timer and choose the interval in minutes
 
 ### Star / Like Sync
 
@@ -153,9 +158,25 @@ If you are offline:
 
 * **Authorize with OAuth**: Use device-flow OAuth login (with optional QR code)
 * **Reset access token**: Clear token so the plugin re-authenticates
-* **Clear all cached tokens**: Remove cached OAuth/token data and credentials
-* **Alternative credentials**: Configure API token / username / password (Legacy) fallback
+* **Clear all cached tokens**: Remove cached OAuth/token data
+* **API token**: Configure a Readeck API token
 * **Set timeout**: Tune network timeouts for slow connections or large downloads
+
+## Development
+
+* `make deps`
+* `make format-check`
+* `make test`
+* `make lint`
+* `make koreader-smoke`
+* `make koreader-build`
+* `make koreader-runtime-smoke`
+
+`make deps` uses LuaRocks to install development tools from `readeck-koplugin-dev-0.1-1.rockspec`. The plugin itself does not depend on LuaRocks at runtime; it should keep using KOReader's bundled Lua modules and native libraries so it remains portable across Linux, Android, and e-reader builds.
+
+`make koreader-smoke` always runs the fast KOReader-shaped stub smoke test. If a built KOReader emulator runtime exists at `references/koreader/koreader-emulator-x86_64-pc-linux-gnu-debug/koreader`, it also runs the real runtime probe with KOReader's own `luajit`, `setupkoenv.lua`, and unit-test bootstrap. Use `make koreader-build` first, or set `KOREADER_DIR` / `KOREADER_BUILD_DIR` when your KOReader checkout lives elsewhere.
+
+CI runs Stylua, Luacheck, Busted, mock Readeck API tests, the stub smoke test, and a separate KOReader runtime smoke job on GitHub Actions.
 
 ## 🔍 Troubleshooting
 

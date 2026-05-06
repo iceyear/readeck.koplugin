@@ -17,8 +17,12 @@ KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KORea
 - 📊 **阅读进度**：追踪阅读进度并相应处理文章。
 - 🏷️ **标签支持**：按标签过滤文章，忽略带有特定标签的文章。
 - 🔍 **灵活配置**：通过友好的用户界面轻松配置所有设置。
-- 🗑️ **智能删除**：可选择将已完成或已阅读的文章从服务器删除或归档。
-- 📝 **批注同步**：将评论作为标签同步回 Readeck 服务器。
+- 🗄️ **完成动作**：可选择将已完成或已阅读的文章在 Readeck 中归档或删除；只有远端动作成功后才移除本地文件。
+- 📝 **批注同步**：将 KOReader 高亮和笔记同步为 Readeck annotations，并避免重复上传。
+- 🕒 **元数据同步**：下载后根据 Readeck 时间设置本地文件时间戳，并把预计阅读时间写入 KOReader 关键词。
+- 🔁 **周期同步**：可使用 KOReader 内部定时器定期同步。
+- ⚡ **协作式下载队列**：通过有上限的异步队列下载文章，并发数可在 1 到 3 之间配置，低性能设备可设为 1。
+- 🌍 **插件 i18n 回退**：优先复用 KOReader gettext，再使用插件内置英文/中文文本。
 
 ## 📥 安装
 
@@ -32,21 +36,21 @@ KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KORea
 要使用此插件，你需要：
 
 1. 一个运行中的 Readeck 服务器（在 [readeck.org](https://www.readeck.org) 了解更多）
-2. 访问服务器的 API 令牌或用户名/密码
+2. 访问服务器的 OAuth 授权或 API 令牌
 3. 在 KOReader 上配置下载文件夹
 
 ### 初始设置
 
 1. 进入主菜单 > 新：Readeck > 设置 > 配置 Readeck 服务器
 2. 输入服务器 URL（不包含 `/api` 路径）
-3. 输入 API 令牌（推荐）或用户名和密码（将用于在服务器上为 KOReader 创建令牌）
+3. 使用 OAuth 设备授权（推荐）或输入 API 令牌
 4. 设置下载文件夹（建议使用专用文件夹）
 
 ## 🛠️ 使用说明
 
 ### 下载新文章
 
-1. 进入主菜单 > 新：Readeck > 从服务器获取新文章
+1. 进入主菜单 > Readeck > 与服务器同步文章
 2. 符合标签过滤设置的文章将被下载
 
 ### 标记文章为已完成
@@ -54,8 +58,8 @@ KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KORea
 当你完成一篇文章的阅读后：
 
 1. 在文章中将阅读状态设置为"完成"或阅读至 100%
-2. 进入主菜单 > 新：Readeck > 远程删除已完成文章
-3. 文章将根据你的设置被归档
+2. 进入主菜单 > Readeck > 处理已完成/已读文章
+3. 插件会先导出高亮，再执行你配置的完成动作，远端成功后再移除本地文件
 
 ### 添加文章
 
@@ -72,18 +76,25 @@ KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KORea
 ## ⚠️ 注意事项
 
 - 下载目录应专门用于 Readeck 插件，其中的现有文件可能会被删除
-- 使用 API 令牌比用户名/密码更安全和高效
+- 当前 Readeck 已不再支持用户名/密码登录；请使用 OAuth 或 API 令牌
 - "将评论作为标签发送"选项允许你在阅读时添加标签
 
 ## 🔧 高级设置
 
-### 文章删除选项
+### 完成动作选项
 
-- **远程删除已完成文章**：将标记为完成的文章从服务器上删除
-- **远程删除已读 100% 的文章**：将阅读进度达到 100% 的文章从服务器上删除
-- **标记为归档而非删除**：将文章标记为归档而不是从服务器上完全删除
-- **下载时处理删除**：在下载新文章时自动处理需要删除的文章
-- **同步远程删除的文件**：删除本地已从服务器上删除的文件
+- **处理 Readeck 中已完成文章**：处理标记为完成的文章
+- **处理 Readeck 中已读 100% 的文章**：处理阅读进度达到 100% 的文章
+- **完成动作使用归档而不是删除**：将文章归档而不是永久删除
+- **同步时处理完成动作**：同步时自动处理符合条件的文章
+- **移除 Readeck 中不存在的本地文件**：清理服务器上已不存在的本地文件
+
+### 高亮与周期同步
+
+- **同步前导出高亮**：每次同步前自动导出本地 Readeck 文章高亮
+- **关闭文档时导出高亮**：关闭 Readeck 文档时自动导出当前文章的高亮和笔记
+- **周期同步**：启用 KOReader 内部定时器，并设置同步间隔
+- **并发下载**：配置同时下载的文章数量。极慢设备建议使用 `1`；设备和服务器足够时可使用 `2-3`。
 
 ### 标签设置
 
@@ -95,6 +106,22 @@ KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KORea
 
 - **从历史记录中移除已完成文章**：将已完成的文章从 KOReader 历史记录中移除
 - **从历史记录中移除已读 100% 的文章**：将已读完的文章从历史记录中移除
+
+## 开发
+
+- `make deps`
+- `make format-check`
+- `make test`
+- `make lint`
+- `make koreader-smoke`
+- `make koreader-build`
+- `make koreader-runtime-smoke`
+
+`make deps` 会通过 LuaRocks 和 `readeck-koplugin-dev-0.1-1.rockspec` 安装开发工具。插件运行时不依赖 LuaRocks，仍然使用 KOReader 自带的 Lua 模块和原生库，以便尽量保持 Linux、Android 和电子书设备构建通用。
+
+`make koreader-smoke` 总会运行快速的 KOReader 形状 stub smoke 测试。如果 `references/koreader/koreader-emulator-x86_64-pc-linux-gnu-debug/koreader` 下已有构建好的 KOReader emulator runtime，它还会使用 KOReader 自己的 `luajit`、`setupkoenv.lua` 和单元测试 bootstrap 运行真实 runtime probe。可以先执行 `make koreader-build`，或者在 KOReader checkout 位于其他路径时设置 `KOREADER_DIR` / `KOREADER_BUILD_DIR`。
+
+CI 会在 GitHub Actions 中运行 Stylua、Luacheck、Busted、模拟 Readeck API 测试、stub smoke 测试，以及独立的 KOReader runtime smoke job。
 
 ## 🔍 故障排除
 
