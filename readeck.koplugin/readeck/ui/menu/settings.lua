@@ -106,6 +106,55 @@ function SettingsMenu.install(Readeck, deps)
         }))
     end
 
+    function Readeck:getHighlightSyncPolicyLabel()
+        if self.highlight_sync_policy == "respect_remote_deletions" then
+            return L("Respect remote deletions")
+        end
+        return L("Preserve local highlights")
+    end
+
+    function Readeck:setHighlightSyncPolicy(touchmenu_instance)
+        local options = {
+            {
+                "preserve_local",
+                L("Preserve local highlights"),
+                L("Remote-deleted highlights may be restored to Readeck. This is safest for avoiding data loss."),
+            },
+            {
+                "respect_remote_deletions",
+                L("Respect remote deletions"),
+                L("Highlights deleted in Readeck stay local in KOReader but are not re-uploaded."),
+            },
+        }
+        local radio_buttons = {}
+        for _, option in ipairs(options) do
+            table.insert(radio_buttons, {
+                {
+                    text = option[2],
+                    provider = option[1],
+                    checked = (self.highlight_sync_policy or "preserve_local") == option[1],
+                    info_text = option[3],
+                },
+            })
+        end
+
+        UIManager:show(RadioButtonWidget:new({
+            title_text = L("Highlight sync conflict policy"),
+            cancel_text = L("Cancel"),
+            ok_text = L("Apply"),
+            radio_buttons = radio_buttons,
+            callback = function(radio)
+                if radio then
+                    self.highlight_sync_policy = radio.provider
+                    self:saveSettings()
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
+                end
+            end,
+        }))
+    end
+
     function Readeck:buildSettingsMenuItems()
         return {
             {
@@ -311,6 +360,15 @@ function SettingsMenu.install(Readeck, deps)
                         callback = function()
                             self.auto_export_highlights = not self.auto_export_highlights
                             self:saveSettings()
+                        end,
+                    },
+                    {
+                        text_func = function()
+                            return T(L("Highlight sync conflict policy: %1"), Readeck.getHighlightSyncPolicyLabel(self))
+                        end,
+                        keep_menu_open = true,
+                        callback = function(touchmenu_instance)
+                            Readeck.setHighlightSyncPolicy(self, touchmenu_instance)
                         end,
                     },
                 },

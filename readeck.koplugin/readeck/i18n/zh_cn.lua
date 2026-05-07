@@ -27,6 +27,12 @@ local zh = {
     ["Highlights"] = "高亮",
     ["Sync highlights before article sync"] = "文章同步前同步高亮",
     ["Sync highlights when closing a document"] = "关闭文档时同步高亮",
+    ["Highlight sync conflict policy"] = "高亮同步冲突策略",
+    ["Highlight sync conflict policy: %1"] = "高亮同步冲突策略：%1",
+    ["Preserve local highlights"] = "保留本地高亮",
+    ["Remote-deleted highlights may be restored to Readeck. This is safest for avoiding data loss."] = "远端删除的高亮可能会被恢复到 Readeck。这是最不容易丢数据的策略。",
+    ["Respect remote deletions"] = "尊重远端删除",
+    ["Highlights deleted in Readeck stay local in KOReader but are not re-uploaded."] = "在 Readeck 中删除的高亮会保留在 KOReader 本地，但不会重新上传。",
     ["Periodic sync"] = "周期同步",
     ["Periodic sync (beta)"] = "周期同步（Beta）",
     ["Beta: periodically runs sync while KOReader is open."] = "Beta：KOReader 打开期间定期运行同步。",
@@ -39,6 +45,7 @@ local zh = {
     ["KOReader progress updated: %1"] = "已更新 KOReader 阅读进度：%1",
     ["Highlights imported: %1"] = "已导入高亮：%1",
     ["Highlights exported: %1"] = "已导出高亮：%1",
+    ["Highlights kept local only: %1"] = "仅保留在本地的高亮：%1",
     ["Highlights skipped: %1"] = "已跳过高亮：%1",
     ["Highlight sync failed: %1"] = "高亮同步失败：%1",
     ["Removed from KOReader: %1"] = "已从 KOReader 移除：%1",
@@ -101,6 +108,7 @@ local zh = {
     ["Skipped (overlap): %1"] = "已跳过（重叠）：%1",
     ["Skipped (unsupported): %1"] = "已跳过（不支持）：%1",
     ["Import failed: %1"] = "导入失败：%1",
+    ["Kept local only: %1"] = "仅保留在本地：%1",
     [ [[Download directory: use a directory that is exclusively used by the Readeck plugin. Existing files in this directory risk being deleted.
 
 Articles marked as finished or 100% read can be archived or deleted in Readeck. Those actions can also run automatically when syncing if the 'Process completion actions when syncing' option is enabled.

@@ -106,3 +106,6 @@ jobs:
 
       - name: KOReader runtime smoke test
         run: make koreader-runtime-smoke
+
+      - name: KOReader network smoke test
+        run: make koreader-network-smoke

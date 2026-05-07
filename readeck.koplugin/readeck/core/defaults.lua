@@ -1,5 +1,6 @@
 local Defaults = {}
 
+Defaults.PLUGIN_VERSION = "0.1.0"
 Defaults.ARTICLE_ID_SUFFIX = " [rd-id_"
 Defaults.ARTICLE_ID_POSTFIX = "]"
 Defaults.DOWNLOAD_FAILED = 1
@@ -36,6 +37,7 @@ Defaults.values = {
     file_block_timeout = 10,
     file_total_timeout = 30,
     filter_tag = "",
+    highlight_sync_policy = "preserve_local",
     ignore_tags = "",
     is_dateparser_available = false,
     is_dateparser_checked = false,

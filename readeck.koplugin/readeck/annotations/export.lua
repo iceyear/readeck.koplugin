@@ -21,6 +21,7 @@ local function new_highlight_counts()
         imported = 0,
         import_skipped = 0,
         import_failed = 0,
+        remote_deleted = 0,
     }
 end
 
@@ -102,6 +103,24 @@ function Export.install(Readeck, deps)
         return false
     end
 
+    function Readeck:indexRemoteHighlightsByID(remote_highlights)
+        local ids = {}
+        for _, remote_highlight in ipairs(remote_highlights or {}) do
+            if remote_highlight.id then
+                ids[tostring(remote_highlight.id)] = true
+            end
+        end
+        return ids
+    end
+
+    function Readeck:shouldKeepRemoteDeletedHighlightLocal(local_highlight, remote_highlight_ids)
+        if self.highlight_sync_policy ~= "respect_remote_deletions" then
+            return false
+        end
+        local remote_id = local_highlight and local_highlight.readeck_annotation_id
+        return remote_id ~= nil and tostring(remote_id) ~= "" and not remote_highlight_ids[tostring(remote_id)]
+    end
+
     function Readeck:addRemoteHighlightToAnnotations(path, annotations, remote_highlight, options)
         local local_annotation, reason = Highlights.remote_to_local_annotation(remote_highlight)
         if not local_annotation then
@@ -177,6 +196,9 @@ function Export.install(Readeck, deps)
         if (counts.import_failed or 0) > 0 then
             table.insert(message_parts, T(L("Import failed: %1"), counts.import_failed))
         end
+        if (counts.remote_deleted or 0) > 0 then
+            table.insert(message_parts, T(L("Kept local only: %1"), counts.remote_deleted))
+        end
 
         if #message_parts > 0 then
             return T(L("Finished syncing highlights.\n%1"), table.concat(message_parts, "\n"))
@@ -224,56 +246,74 @@ function Export.install(Readeck, deps)
         local highlight_profile = Features.highlight_payload_profile(self.server_info or self:refreshServerInfo(true))
         local counts = new_highlight_counts()
         self:importRemoteHighlightsForPath(path, annotations, existing_highlights, highlight_profile, counts, options)
+        local remote_highlight_ids = self:indexRemoteHighlightsByID(existing_highlights)
+        local local_annotations_changed = false
 
         for _, h in pairs(annotations) do
             local local_highlight, skip_reason = Highlights.build_payload(h, highlight_profile)
 
             if local_highlight then
-                local is_overlapping = false
-                local is_remote_linked = false
-                for _, remote_h in ipairs(existing_highlights) do
-                    if Highlights.local_matches_remote_id(h, remote_h) then
-                        is_overlapping = true
-                        is_remote_linked = true
-                        break
-                    elseif Highlights.overlap(local_highlight, remote_h) then
-                        is_overlapping = true
-                        break
-                    end
-                end
-
-                if is_overlapping then
-                    if not is_remote_linked then
-                        counts.skipped = counts.skipped + 1
-                        Log:info("Skipping overlapping highlight:", local_highlight.text)
-                    end
+                if self:shouldKeepRemoteDeletedHighlightLocal(h, remote_highlight_ids) then
+                    counts.remote_deleted = counts.remote_deleted + 1
+                    Log:info("Keeping remote-deleted highlight local only:", h.readeck_annotation_id)
                 else
-                    local bodyJSON = JSON.encode(local_highlight)
-                    Log:debug(
-                        "Start selector:",
-                        local_highlight.start_selector,
-                        "End selector:",
-                        local_highlight.end_selector
-                    )
-                    local headers = {
-                        ["Content-type"] = "application/json",
-                        ["Accept"] = "application/json, */*",
-                        ["Content-Length"] = tostring(#bodyJSON),
-                        ["Authorization"] = "Bearer " .. self.access_token,
-                    }
+                    local is_overlapping = false
+                    local is_remote_linked = false
+                    for _, remote_h in ipairs(existing_highlights) do
+                        if Highlights.local_matches_remote_id(h, remote_h) then
+                            is_overlapping = true
+                            is_remote_linked = true
+                            break
+                        elseif Highlights.overlap(local_highlight, remote_h) then
+                            is_overlapping = true
+                            break
+                        end
+                    end
 
-                    local result = self:callAPI("POST", Api.paths.annotations(article_id), headers, bodyJSON, "", true)
-                    if result then
-                        counts.success = counts.success + 1
-                        table.insert(existing_highlights, local_highlight)
+                    if is_overlapping then
+                        if not is_remote_linked then
+                            counts.skipped = counts.skipped + 1
+                            Log:info("Skipping overlapping highlight:", local_highlight.text)
+                        end
                     else
-                        counts.error = counts.error + 1
+                        local bodyJSON = JSON.encode(local_highlight)
+                        Log:debug(
+                            "Start selector:",
+                            local_highlight.start_selector,
+                            "End selector:",
+                            local_highlight.end_selector
+                        )
+                        local headers = {
+                            ["Content-type"] = "application/json",
+                            ["Accept"] = "application/json, */*",
+                            ["Content-Length"] = tostring(#bodyJSON),
+                            ["Authorization"] = "Bearer " .. self.access_token,
+                        }
+
+                        local result =
+                            self:callAPI("POST", Api.paths.annotations(article_id), headers, bodyJSON, "", true)
+                        if result then
+                            counts.success = counts.success + 1
+                            if type(result) == "table" and result.id then
+                                h.readeck_annotation_id = result.id
+                                local_annotations_changed = true
+                                table.insert(existing_highlights, result)
+                                remote_highlight_ids[tostring(result.id)] = true
+                            else
+                                table.insert(existing_highlights, local_highlight)
+                            end
+                        else
+                            counts.error = counts.error + 1
+                        end
                     end
                 end
             elseif skip_reason then
                 counts.invalid = counts.invalid + 1
                 Log:info("Skipping unsupported highlight:", skip_reason)
             end
+        end
+        if local_annotations_changed then
+            self:saveAnnotationsForPath(path, annotations)
         end
 
         if not options.quiet then

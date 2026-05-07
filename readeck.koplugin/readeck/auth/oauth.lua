@@ -18,6 +18,7 @@ function OAuth.install(Readeck, deps)
     local Log = deps.Log
     local OAUTH_DEVICE_GRANT = deps.OAUTH_DEVICE_GRANT
     local DEFAULT_OAUTH_SCOPES = deps.DEFAULT_OAUTH_SCOPES
+    local PLUGIN_VERSION = deps.PLUGIN_VERSION
     OAuthForm.install(Readeck, deps)
 
     function Readeck:refreshServerInfo(quiet)
@@ -188,7 +189,7 @@ function OAuth.install(Readeck, deps)
             client_name = client_name,
             client_uri = "https://github.com/iceyear/readeck.koplugin",
             software_id = software_id,
-            software_version = "1.0",
+            software_version = PLUGIN_VERSION,
             grant_types = { OAUTH_DEVICE_GRANT },
         })
 

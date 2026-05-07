@@ -46,6 +46,9 @@ function StatusMessages.install(Readeck, deps)
         if (counts.highlights_exported or 0) > 0 then
             table.insert(parts, T(L("Highlights exported: %1"), counts.highlights_exported))
         end
+        if (counts.highlights_local_only or 0) > 0 then
+            table.insert(parts, T(L("Highlights kept local only: %1"), counts.highlights_local_only))
+        end
         if (counts.highlights_skipped or 0) > 0 then
             table.insert(parts, T(L("Highlights skipped: %1"), counts.highlights_skipped))
         end

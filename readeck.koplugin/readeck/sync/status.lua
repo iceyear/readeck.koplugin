@@ -8,6 +8,7 @@ function Status.new_counts(initial)
         local_progress_updated = 0,
         highlights_imported = 0,
         highlights_exported = 0,
+        highlights_local_only = 0,
         highlights_skipped = 0,
         highlights_failed = 0,
         local_removed = 0,

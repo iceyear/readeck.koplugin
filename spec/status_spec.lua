@@ -14,6 +14,7 @@ describe("readeck.sync.status", function()
         assert.are.equal(0, counts.local_progress_updated)
         assert.are.equal(0, counts.highlights_imported)
         assert.are.equal(0, counts.highlights_exported)
+        assert.are.equal(0, counts.highlights_local_only)
     end)
 
     it("merges processed article ID sets", function()

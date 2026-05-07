@@ -182,6 +182,7 @@ function Articles.install(Readeck, deps)
                 if highlight_counts then
                     action_counts.highlights_imported = highlight_counts.imported or 0
                     action_counts.highlights_exported = highlight_counts.success or 0
+                    action_counts.highlights_local_only = highlight_counts.remote_deleted or 0
                     action_counts.highlights_skipped = (highlight_counts.skipped or 0)
                         + (highlight_counts.invalid or 0)
                         + (highlight_counts.import_skipped or 0)

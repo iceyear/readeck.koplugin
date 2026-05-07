@@ -365,6 +365,9 @@ end
 describe("KOReader smoke", function()
     it("loads the plugin class and builds the main menu with KOReader-shaped APIs", function()
         run_menu_smoke()
+        local Defaults = require("readeck.core.defaults")
+        local metadata = dofile("readeck.koplugin/_meta.lua")
+        assert.are.equal(Defaults.PLUGIN_VERSION, metadata.version)
     end)
 
     it("shows current-article highlight sync only for opened Readeck articles", function()
@@ -458,6 +461,117 @@ describe("KOReader smoke", function()
         assert.are.equal("remote-1", saved_annotations[1].readeck_annotation_id)
         assert.are.equal("section/p[2].4", saved_annotations[1].pos0)
         assert.are.equal("remote note", saved_annotations[1].note)
+    end)
+
+    it("keeps remote-deleted linked highlights local-only when configured", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local post_count = 0
+        local instance = setmetatable({
+            access_token = "token",
+            highlight_sync_policy = "respect_remote_deletions",
+            server_info = { version = { canonical = "0.22.2" } },
+            getBearerToken = function()
+                return true
+            end,
+            callAPI = function(_, method, path)
+                if method == "GET" and path == "/api/bookmarks/abc123/annotations" then
+                    return {}
+                end
+                if method == "POST" then
+                    post_count = post_count + 1
+                end
+                return true
+            end,
+        }, { __index = Readeck })
+
+        local ok, counts = instance:syncHighlightsForArticle("abc123", nil, {
+            {
+                readeck_annotation_id = "deleted-remote-id",
+                drawer = "lighten",
+                text = "local text",
+                pos0 = "section/p[2].4",
+                pos1 = "section/p[2].15",
+            },
+        }, { quiet = true })
+
+        assert.is_true(ok)
+        assert.are.equal(0, post_count)
+        assert.are.equal(1, counts.remote_deleted)
+        assert.are.equal(0, counts.success)
+    end)
+
+    it("stores returned Readeck annotation IDs after exporting local highlights", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local article_path = "/tmp/readeck/Article [rd-id_abc123].epub"
+        local local_annotations = {
+            {
+                drawer = "lighten",
+                text = "local text",
+                pos0 = "section/p[2].4",
+                pos1 = "section/p[2].15",
+            },
+        }
+        local saved_annotations
+
+        package.loaded["docsettings"] = nil
+        package.preload["docsettings"] = function()
+            return {
+                hasSidecarFile = function()
+                    return true
+                end,
+                open = function()
+                    return {
+                        readSetting = function()
+                            return local_annotations
+                        end,
+                        saveSetting = function(_, key, value)
+                            if key == "annotations" then
+                                saved_annotations = value
+                            end
+                        end,
+                        flush = function() end,
+                    }
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local instance = setmetatable({
+            access_token = "token",
+            highlight_sync_policy = "preserve_local",
+            server_info = { version = { canonical = "0.22.2" } },
+            getBearerToken = function()
+                return true
+            end,
+            getArticleID = function()
+                return "abc123"
+            end,
+            callAPI = function(_, method, path)
+                if method == "GET" and path == "/api/bookmarks/abc123/annotations" then
+                    return {}
+                end
+                if method == "POST" and path == "/api/bookmarks/abc123/annotations" then
+                    return {
+                        id = "created-remote-id",
+                        start_selector = "section/p[2]",
+                        start_offset = 4,
+                        end_selector = "section/p[2]",
+                        end_offset = 15,
+                    }
+                end
+                return true
+            end,
+        }, { __index = Readeck })
+
+        local ok, counts = instance:syncHighlightsForPath(article_path, { quiet = true })
+
+        assert.is_true(ok)
+        assert.are.equal(1, counts.success)
+        assert.are.equal("created-remote-id", local_annotations[1].readeck_annotation_id)
+        assert.are.equal("created-remote-id", saved_annotations[1].readeck_annotation_id)
     end)
 
     it("falls back to the blocking downloader when KOReader async HTTP fails", function()
@@ -1176,12 +1290,14 @@ describe("KOReader smoke", function()
         local message = instance:formatSyncMessage(0, 1, 0, {
             highlights_imported = 3,
             highlights_exported = 2,
+            highlights_local_only = 4,
             highlights_skipped = 1,
             highlights_failed = 1,
         })
 
         assert.is_true(message:find("Highlights imported: 3", 1, true) ~= nil)
         assert.is_true(message:find("Highlights exported: 2", 1, true) ~= nil)
+        assert.is_true(message:find("Highlights kept local only: 4", 1, true) ~= nil)
         assert.is_true(message:find("Highlights skipped: 1", 1, true) ~= nil)
         assert.is_true(message:find("Highlight sync failed: 1", 1, true) ~= nil)
     end)

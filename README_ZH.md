@@ -84,6 +84,8 @@ KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KORea
 
 同步高亮时，插件会先把 Readeck annotations 导入为 KOReader 高亮，再把本地新增的 KOReader 高亮导出回 Readeck。导出时会根据 Readeck 服务端能力决定是否发送笔记字段和透明高亮颜色；旧版本服务端会收到更保守的 payload，避免因为不支持的新字段失败。
 
+默认策略会保留本地高亮：如果远端 Readeck 删除了某条高亮，但 KOReader 本地仍然存在，下一次同步可能会把它恢复到 Readeck。若希望尊重远端删除，可把 **高亮同步冲突策略** 设置为 **尊重远端删除**；这样关联过远端 ID 的本地高亮会保留在 KOReader，但不会重新上传。
+
 ## ⚠️ 注意事项
 
 - 下载目录应专门用于 Readeck 插件，其中的现有文件可能会被删除
@@ -105,6 +107,7 @@ KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KORea
 
 - **文章同步前同步高亮**：每次文章同步前自动同步本地 Readeck 文章高亮
 - **关闭文档时同步高亮**：关闭 Readeck 文档时自动同步当前文章的高亮和笔记
+- **高亮同步冲突策略**：选择 Readeck 上已删除的 annotation 是否由 KOReader 恢复，或只保留在本地
 - **周期同步（Beta）**：启用 KOReader 内部定时器，并设置同步间隔
 - **并发下载**：配置同时下载的文章数量。极慢设备建议使用 `1`；设备和服务器足够时可使用 `2-3`。
 - **语言**：跟随 KOReader 语言，或强制插件界面使用英文/简体中文
@@ -127,6 +130,7 @@ KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KORea
 - `make test`
 - `make lint`
 - `make koreader-smoke`
+- `make koreader-network-smoke`
 - `make koreader-build`
 - `make koreader-runtime-smoke`
 
@@ -134,7 +138,9 @@ KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KORea
 
 `make koreader-smoke` 总会运行快速的 KOReader 形状 stub smoke 测试。如果 `references/koreader/koreader-emulator-x86_64-pc-linux-gnu-debug/koreader` 下已有构建好的 KOReader emulator runtime，它还会使用 KOReader 自己的 `luajit`、`setupkoenv.lua` 和单元测试 bootstrap 运行真实 runtime probe。可以先执行 `make koreader-build`，或者在 KOReader checkout 位于其他路径时设置 `KOREADER_DIR` / `KOREADER_BUILD_DIR`。
 
-CI 会在 GitHub Actions 中运行 Stylua、Luacheck、Busted、模拟 Readeck API 测试、stub smoke 测试，以及独立的 KOReader runtime smoke job。
+`make koreader-network-smoke` 会启动本地 mock Readeck HTTP server，并用 KOReader runtime 通过真实 `socket.http` 访问它。它覆盖 API token、OAuth 表单端点、文章列表、EPUB 下载，以及高亮同步/冲突策略行为，不需要公开 Readeck 实例。
+
+CI 会在 GitHub Actions 中运行 Stylua、Luacheck、Busted、模拟 Readeck API 测试、stub smoke 测试，以及独立的 KOReader runtime/network smoke job。
 
 ## 🔍 故障排除
 

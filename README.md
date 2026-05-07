@@ -114,6 +114,8 @@ If you are offline:
 2. Go to **Main Menu > Readeck > Sync current article highlights**
 3. Readeck annotations are imported into KOReader highlights, and local KOReader highlights with supported notes/colors are uploaded to Readeck as annotations. Duplicates are skipped if they overlap.
 
+By default, highlight sync preserves local highlights. If a highlight was deleted in Readeck but still exists in KOReader, it may be restored to Readeck on the next sync. Set **Highlight sync conflict policy** to **Respect remote deletions** if you prefer remote deletions to stop those linked local highlights from being re-uploaded; the local KOReader copy is kept.
+
 ### Syncing Reading Progress
 
 During sync, the plugin can send KOReader's local reading progress below 100% back to Readeck without archiving the article. It also applies newer incomplete Readeck `read_progress` values to KOReader sidecars when articles are downloaded or skipped because they already exist locally. Articles that are being processed by completion actions are handled by the archive/delete flow instead.
@@ -148,6 +150,7 @@ During sync, the plugin can send KOReader's local reading progress below 100% ba
 * **Concurrent downloads**: Choose how many article downloads run at once. Use `1` for the safest behavior on very slow devices, or `2-3` when the device and server can handle it.
 * **Periodic sync (beta)**: Enable a KOReader timer and choose the interval in minutes
 * **Language**: Follow KOReader's language, or force the plugin UI to English / Simplified Chinese
+* **Highlight sync conflict policy**: Choose whether deleted Readeck annotations should be restored from KOReader or kept local-only
 
 ### Star / Like Sync
 
@@ -178,6 +181,7 @@ During sync, the plugin can send KOReader's local reading progress below 100% ba
 * `make test`
 * `make lint`
 * `make koreader-smoke`
+* `make koreader-network-smoke`
 * `make koreader-build`
 * `make koreader-runtime-smoke`
 
@@ -185,7 +189,9 @@ During sync, the plugin can send KOReader's local reading progress below 100% ba
 
 `make koreader-smoke` always runs the fast KOReader-shaped stub smoke test. If a built KOReader emulator runtime exists at `references/koreader/koreader-emulator-x86_64-pc-linux-gnu-debug/koreader`, it also runs the real runtime probe with KOReader's own `luajit`, `setupkoenv.lua`, and unit-test bootstrap. Use `make koreader-build` first, or set `KOREADER_DIR` / `KOREADER_BUILD_DIR` when your KOReader checkout lives elsewhere.
 
-CI runs Stylua, Luacheck, Busted, mock Readeck API tests, the stub smoke test, and a separate KOReader runtime smoke job on GitHub Actions.
+`make koreader-network-smoke` starts a local mock Readeck HTTP server and drives the plugin through KOReader's runtime against real `socket.http` calls. It covers API-token auth, OAuth form endpoints, bookmark listing, EPUB download, and highlight sync/export conflict behavior without needing a public Readeck instance.
+
+CI runs Stylua, Luacheck, Busted, mock Readeck API tests, the stub smoke test, and separate KOReader runtime/network smoke jobs on GitHub Actions.
 
 ## 🔍 Troubleshooting
 

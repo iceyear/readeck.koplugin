@@ -92,6 +92,11 @@ describe("readeck.i18n", function()
             "同步当前文章高亮",
             I18n.translate("Sync current article highlights", nil, settings("zh_CN"))
         )
+        assert.are.equal("尊重远端删除", I18n.translate("Respect remote deletions", nil, settings("zh_CN")))
+        assert.are.equal(
+            "仅保留在本地的高亮：%1",
+            I18n.translate("Highlights kept local only: %1", nil, settings("zh_CN"))
+        )
         assert.are.equal("简体中文", I18n.translate("Simplified Chinese", nil, settings("zh_CN")))
         assert.are.equal("星级阈值", I18n.translate("Star rating threshold", nil, settings("zh_CN")))
     end)

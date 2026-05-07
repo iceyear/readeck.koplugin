@@ -44,6 +44,7 @@ local deps = {
     downloaded = Defaults.DOWNLOAD_DONE,
     OAUTH_DEVICE_GRANT = Defaults.OAUTH_DEVICE_GRANT,
     DEFAULT_OAUTH_SCOPES = Defaults.DEFAULT_OAUTH_SCOPES,
+    PLUGIN_VERSION = Defaults.PLUGIN_VERSION,
 }
 
 Helpers.install(Readeck, deps)
