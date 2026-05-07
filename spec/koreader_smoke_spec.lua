@@ -398,6 +398,167 @@ describe("KOReader smoke", function()
         assert.is_true(texts:find("Sync current article highlights", 1, true) ~= nil)
     end)
 
+    it("fetches article lists through KOReader async HTTP when available", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local request_url
+        local request_headers
+
+        package.loaded["json"] = nil
+        package.preload["json"] = function()
+            return {
+                encode = function()
+                    return "{}"
+                end,
+                decode = function()
+                    return {
+                        { id = "article-a", labels = {} },
+                        { id = "article-b", labels = {} },
+                    }
+                end,
+            }
+        end
+        package.loaded.httpclient = nil
+        package.preload.httpclient = function()
+            return {
+                new = function()
+                    return {
+                        request = function(_, request, callback)
+                            request_url = request.url
+                            local headers = {
+                                values = {},
+                                add = function(self, key, value)
+                                    self.values[key] = value
+                                end,
+                            }
+                            request.on_headers(headers)
+                            request_headers = headers.values
+                            callback({ code = 200, body = "[]" })
+                        end,
+                    }
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        require("ui/uimanager").looper = {
+            add_callback = function() end,
+        }
+        local instance = setmetatable({
+            access_token = "token",
+            articles_per_sync = 2,
+            filter_tag = "",
+            ignore_tags = "",
+            server_url = "https://readeck.example",
+            sort_param = "-created",
+        }, { __index = Readeck })
+
+        local done_articles
+        local done_err
+        local async = instance:getArticleListAsync(function(articles, err)
+            done_articles = articles
+            done_err = err
+        end)
+
+        assert.is_true(async)
+        assert.is_nil(done_err)
+        assert.are.equal(2, #done_articles)
+        assert.are.equal(
+            "https://readeck.example/api/bookmarks?limit=2&offset=0&is_archived=0&type=article&sort=-created",
+            request_url
+        )
+        assert.are.equal("Bearer token", request_headers.Authorization)
+    end)
+
+    it("falls back to blocking article list fetch when KOReader async HTTP cannot start", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+
+        package.loaded.httpclient = nil
+        package.preload.httpclient = function()
+            return {
+                new = function()
+                    return {
+                        request = function()
+                            error("frontend/httpclient.lua:18: attempt to index field 'looper'")
+                        end,
+                    }
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        require("ui/uimanager").looper = {
+            add_callback = function() end,
+        }
+        local blocking_fetches = 0
+        local instance = setmetatable({
+            access_token = "token",
+            articles_per_sync = 2,
+            filter_tag = "",
+            ignore_tags = "",
+            server_url = "https://readeck.example",
+            sort_param = "-created",
+            getArticleList = function()
+                blocking_fetches = blocking_fetches + 1
+                return {
+                    { id = "fallback-article", labels = {} },
+                }
+            end,
+        }, { __index = Readeck })
+
+        local done_articles
+        local done_err
+        instance:getArticleListAsync(function(articles, err)
+            done_articles = articles
+            done_err = err
+        end)
+
+        assert.is_nil(done_err)
+        assert.are.equal(1, blocking_fetches)
+        assert.are.equal("fallback-article", done_articles[1].id)
+        assert.is_true(instance.article_list_http_client_disabled)
+    end)
+
+    it("does not start KOReader async HTTP when the turbo looper is inactive", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+
+        local UIManager = require("ui/uimanager")
+        UIManager.looper = nil
+
+        package.loaded.httpclient = nil
+        package.preload.httpclient = function()
+            error("httpclient should not be required without an active looper")
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local blocking_fetches = 0
+        local instance = setmetatable({
+            access_token = "token",
+            articles_per_sync = 2,
+            filter_tag = "",
+            ignore_tags = "",
+            server_url = "https://readeck.example",
+            sort_param = "-created",
+            getArticleList = function()
+                blocking_fetches = blocking_fetches + 1
+                return {
+                    { id = "blocking-article", labels = {} },
+                }
+            end,
+        }, { __index = Readeck })
+
+        local done_articles
+        local async = instance:getArticleListAsync(function(articles)
+            done_articles = articles
+        end)
+
+        assert.is_false(async)
+        assert.are.equal(1, blocking_fetches)
+        assert.are.equal("blocking-article", done_articles[1].id)
+    end)
+
     it("opens the active OAuth verification link through KOReader's device API", function()
         package.path = "./readeck.koplugin/?.lua;" .. package.path
         install_koreader_stubs()
@@ -664,6 +825,86 @@ describe("KOReader smoke", function()
         assert.are.equal(1, counts.success)
         assert.are.equal("created-remote-id", local_annotations[1].readeck_annotation_id)
         assert.are.equal("created-remote-id", saved_annotations[1].readeck_annotation_id)
+    end)
+
+    it("syncs local highlight files in scheduled slices", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local scheduled = 0
+        local entries = { "First [rd-id_a].epub", "Second [rd-id_b].epub" }
+
+        package.loaded["ui/uimanager"] = nil
+        package.preload["ui/uimanager"] = function()
+            return {
+                show = function() end,
+                close = function() end,
+                forceRePaint = function() end,
+                scheduleIn = function(_, delay_or_callback, maybe_callback)
+                    local callback = maybe_callback or delay_or_callback
+                    scheduled = scheduled + 1
+                    callback()
+                end,
+                unschedule = function() end,
+            }
+        end
+        package.loaded["libs/libkoreader-lfs"] = nil
+        package.preload["libs/libkoreader-lfs"] = function()
+            return {
+                attributes = function(path, key)
+                    local attrs
+                    if path == "/tmp/readeck" then
+                        attrs = { mode = "directory" }
+                    elseif path:match("%.epub$") then
+                        attrs = { mode = "file" }
+                    end
+                    if attrs and key then
+                        return attrs[key]
+                    end
+                    return attrs
+                end,
+                dir = function()
+                    local index = 0
+                    return function()
+                        index = index + 1
+                        return entries[index]
+                    end
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local synced_paths = {}
+        local progress = {}
+        local done_counts
+        local instance = setmetatable({
+            directory = "/tmp/readeck",
+            isempty = function(_, value)
+                return value == nil or value == ""
+            end,
+            getArticleID = function(_, path)
+                return path:match("%[rd%-id_([^%]]+)%]")
+            end,
+            syncHighlightsForPath = function(_, path)
+                table.insert(synced_paths, path)
+                return true, { success = 1 }
+            end,
+        }, { __index = Readeck })
+
+        instance:syncHighlightsForLocalFilesAsync({
+            on_progress = function(completed, total)
+                table.insert(progress, completed .. "/" .. total)
+            end,
+        }, function(_, counts)
+            done_counts = counts
+        end)
+
+        assert.are.same({
+            "/tmp/readeck/First [rd-id_a].epub",
+            "/tmp/readeck/Second [rd-id_b].epub",
+        }, synced_paths)
+        assert.are.same({ "0/2", "1/2", "2/2" }, progress)
+        assert.are.equal(2, done_counts.success)
+        assert.is_true(scheduled >= 2)
     end)
 
     it("updates linked KOReader highlights when Readeck note or color changed", function()

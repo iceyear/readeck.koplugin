@@ -53,6 +53,7 @@ describe("readeck.i18n", function()
     it("covers Readeck menu labels that KOReader does not own", function()
         assert.are.equal("全部文章", I18n.translate("All articles", nil, settings("zh_CN")))
         assert.are.equal("文章排序", I18n.translate("Sort articles by", nil, settings("zh_CN")))
+        assert.are.equal("服务器 URL：%1", I18n.translate("Server URL: %1", nil, settings("zh_CN")))
         assert.are.equal(
             "添加时间，最新优先",
             I18n.translate("Added, most recent first", nil, settings("zh_CN"))
@@ -70,6 +71,7 @@ describe("readeck.i18n", function()
             "正在同步文章… 已检查 %1/%2",
             I18n.translate("Syncing articles… %1/%2 checked", nil, settings("zh_CN"))
         )
+        assert.are.equal("正在同步高亮…", I18n.translate("Syncing highlights…", nil, settings("zh_CN")))
         assert.are.equal(
             "即将在 Readeck 中归档：%1",
             I18n.translate("Will archive in Readeck: %1", nil, settings("zh_CN"))

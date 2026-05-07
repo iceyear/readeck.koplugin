@@ -396,19 +396,75 @@ function Export.install(Readeck, deps)
 
         local ok = true
         local total_counts = new_highlight_counts()
+        for _, path in ipairs(self:listLocalHighlightPaths()) do
+            local export_ok, export_counts = self:syncHighlightsForPath(path, options)
+            add_highlight_counts(total_counts, export_counts)
+            if export_ok == false then
+                ok = false
+            end
+        end
+        return ok, total_counts
+    end
+
+    function Readeck:listLocalHighlightPaths()
+        local paths = {}
+        if self:isempty(self.directory) or lfs.attributes(self.directory, "mode") ~= "directory" then
+            return paths
+        end
+
         for entry in lfs.dir(self.directory) do
             if entry ~= "." and entry ~= ".." then
                 local path = FFIUtil.joinPath(self.directory, entry)
                 if self:getArticleID(path) and lfs.attributes(path, "mode") == "file" then
-                    local export_ok, export_counts = self:syncHighlightsForPath(path, options)
-                    add_highlight_counts(total_counts, export_counts)
-                    if export_ok == false then
-                        ok = false
-                    end
+                    table.insert(paths, path)
                 end
             end
         end
-        return ok, total_counts
+        return paths
+    end
+
+    function Readeck:syncHighlightsForLocalFilesAsync(options, done)
+        options = options or {}
+        done = done or function() end
+
+        local paths = self:listLocalHighlightPaths()
+        local total_counts = new_highlight_counts()
+        local ok = true
+        local total = #paths
+
+        if total == 0 then
+            UIManager:scheduleIn(0, function()
+                done(true, total_counts)
+            end)
+            return true
+        end
+
+        if type(options.on_progress) == "function" then
+            options.on_progress(0, total, total_counts)
+        end
+
+        local index = 0
+        local function step()
+            index = index + 1
+            local path = paths[index]
+            if not path then
+                done(ok, total_counts)
+                return
+            end
+
+            local export_ok, export_counts = self:syncHighlightsForPath(path, options)
+            add_highlight_counts(total_counts, export_counts)
+            if export_ok == false then
+                ok = false
+            end
+            if type(options.on_progress) == "function" then
+                options.on_progress(index, total, total_counts, path)
+            end
+            UIManager:scheduleIn(0, step)
+        end
+
+        UIManager:scheduleIn(0, step)
+        return true
     end
 
     function Readeck:exportHighlightsForLocalFiles(options)

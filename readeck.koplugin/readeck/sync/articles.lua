@@ -31,6 +31,7 @@ end
 
 function Articles.install(Readeck, deps)
     local L = deps.L
+    local T = deps.T
     local Log = deps.Log
 
     function Readeck:getArticleList(options)
@@ -97,6 +98,13 @@ function Articles.install(Readeck, deps)
     end
 
     function Readeck:getArticleListHTTPClient()
+        if self.article_list_http_client_disabled then
+            return nil
+        end
+        if not (UIManager.looper and type(UIManager.looper.add_callback) == "function") then
+            Log:info("KOReader async HTTP looper is not active; using blocking article list fetcher")
+            return nil
+        end
         local ok, client = pcall(require, "httpclient")
         if ok and type(client) == "table" and type(client.new) == "function" then
             return client
@@ -104,15 +112,24 @@ function Articles.install(Readeck, deps)
         return nil
     end
 
+    function Readeck:fetchArticleListBlockingAsync(done)
+        Log:info("Using blocking article list fetcher")
+        UIManager:scheduleIn(0, function()
+            local articles, err = self:getArticleList({ quiet = true })
+            done(articles, err)
+        end)
+        return false
+    end
+
+    function Readeck:disableArticleListHTTPClient(reason)
+        self.article_list_http_client_disabled = true
+        Log:warn("Disabling async article list fetcher:", reason or "request setup failed")
+    end
+
     function Readeck:getArticleListAsync(done)
         local client = self:getArticleListHTTPClient()
         if not client then
-            Log:info("Using blocking article list fetcher")
-            UIManager:scheduleIn(0, function()
-                local articles, err = self:getArticleList({ quiet = true })
-                done(articles, err)
-            end)
-            return false
+            return self:fetchArticleListBlockingAsync(done)
         end
 
         local state = {
@@ -139,79 +156,90 @@ function Articles.install(Readeck, deps)
             })
 
             Log:debug("Fetching article list with async URL:", articles_url)
-            client:new():request({
-                url = self.server_url .. articles_url,
-                method = "GET",
-                on_headers = function(headers)
-                    headers:add("Authorization", "Bearer " .. self.access_token)
-                    headers:add("Accept", "application/json, */*")
-                end,
-            }, function(response)
-                local code = response_code(response)
-                if code == 404 then
-                    Log:debug("Couldn't get offset", state.offset)
-                    done(state.article_list)
-                    return
-                end
-
-                if (code == 401 or code == 403) and not state.retry_auth then
-                    state.retry_auth = true
-                    self.access_token = ""
-                    self.token_expiry = 0
-                    if
-                        self:getBearerToken({
-                            on_oauth_success = function()
-                                self:scheduleSyncAfterOAuth()
-                            end,
-                        })
-                    then
-                        fetch_next()
-                    elseif self:isOAuthPollingActive() then
-                        done(nil, "auth_pending")
-                    else
-                        done(nil, "auth_error")
+            local ok, request_err = pcall(function()
+                client:new():request({
+                    url = self.server_url .. articles_url,
+                    method = "GET",
+                    on_headers = function(headers)
+                        headers:add("Authorization", "Bearer " .. self.access_token)
+                        headers:add("Accept", "application/json, */*")
+                    end,
+                }, function(response)
+                    local code = response_code(response)
+                    if code == 404 then
+                        Log:debug("Couldn't get offset", state.offset)
+                        done(state.article_list)
+                        return
                     end
-                    return
-                end
 
-                if not code or code < 200 or code >= 300 then
-                    Log:warn("Async article list failed at offset", state.offset, response_error(response), code or "")
-                    done(nil, "network_error")
-                    return
-                end
-
-                local ok, articles_json = pcall(JSON.decode, response.body or "")
-                if not ok or type(articles_json) ~= "table" then
-                    Log:warn("Async article list response was not valid JSON")
-                    done(nil, "json_error")
-                    return
-                end
-
-                local new_article_list = {}
-                for _, article in ipairs(articles_json) do
-                    table.insert(new_article_list, article)
-                end
-
-                local pending_articles = #new_article_list >= state.limit
-                new_article_list = self:filterIgnoredTags(new_article_list)
-
-                for _, article in ipairs(new_article_list) do
-                    if #state.article_list == self.articles_per_sync then
-                        Log:debug("Hit the article target", self.articles_per_sync)
-                        break
+                    if (code == 401 or code == 403) and not state.retry_auth then
+                        state.retry_auth = true
+                        self.access_token = ""
+                        self.token_expiry = 0
+                        if
+                            self:getBearerToken({
+                                on_oauth_success = function()
+                                    self:scheduleSyncAfterOAuth()
+                                end,
+                            })
+                        then
+                            fetch_next()
+                        elseif self:isOAuthPollingActive() then
+                            done(nil, "auth_pending")
+                        else
+                            done(nil, "auth_error")
+                        end
+                        return
                     end
-                    table.insert(state.article_list, article)
-                end
 
-                if not pending_articles then
-                    Log:debug("No more articles to query")
-                    done(state.article_list)
-                    return
-                end
+                    if not code or code < 200 or code >= 300 then
+                        Log:warn(
+                            "Async article list failed at offset",
+                            state.offset,
+                            response_error(response),
+                            code or ""
+                        )
+                        done(nil, "network_error")
+                        return
+                    end
 
-                state.offset = state.offset + state.limit
-                fetch_next()
+                    local ok, articles_json = pcall(JSON.decode, response.body or "")
+                    if not ok or type(articles_json) ~= "table" then
+                        Log:warn("Async article list response was not valid JSON")
+                        done(nil, "json_error")
+                        return
+                    end
+
+                    local new_article_list = {}
+                    for _, article in ipairs(articles_json) do
+                        table.insert(new_article_list, article)
+                    end
+
+                    local pending_articles = #new_article_list >= state.limit
+                    new_article_list = self:filterIgnoredTags(new_article_list)
+
+                    for _, article in ipairs(new_article_list) do
+                        if #state.article_list == self.articles_per_sync then
+                            Log:debug("Hit the article target", self.articles_per_sync)
+                            break
+                        end
+                        table.insert(state.article_list, article)
+                    end
+
+                    if not pending_articles then
+                        Log:debug("No more articles to query")
+                        done(state.article_list)
+                        return
+                    end
+
+                    state.offset = state.offset + state.limit
+                    fetch_next()
+                end)
             end)
+            if not ok then
+                self:disableArticleListHTTPClient(request_err)
+                self:fetchArticleListBlockingAsync(done)
+            end
         end
 
         fetch_next()
@@ -348,8 +376,13 @@ function Articles.install(Readeck, deps)
         end
 
         local info = self:showSyncStatus(L("Syncing highlights…"))
-        UIManager:scheduleIn(0, function()
-            local highlight_ok, highlight_counts = self:syncHighlightsForLocalFiles({ quiet = true })
+        self:syncHighlightsForLocalFilesAsync({
+            quiet = true,
+            on_progress = function(completed, total)
+                self:closeSyncStatus(info)
+                info = self:showSyncStatus(T(L("Syncing highlights… %1/%2"), completed, total))
+            end,
+        }, function(highlight_ok, highlight_counts)
             if highlight_ok == false and not highlight_counts then
                 highlight_counts = { error = 1 }
             end

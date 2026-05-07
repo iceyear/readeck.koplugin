@@ -152,9 +152,11 @@ During sync, the plugin can send KOReader's local reading progress below 100% ba
 * **Concurrent downloads**: Choose how many article downloads run at once. Use `1` for the safest behavior on very slow devices, or `2-3` when the device and server can handle it.
 * **Periodic sync (beta)**: Enable a KOReader timer and choose the interval in minutes
 * **Language**: Follow KOReader's language, or force the plugin UI to English / Simplified Chinese
-* **Readeck server features**: Auto-detect `/api/info`, force modern Readeck 0.22.2+ annotation fields, or force legacy compatibility
+* **Configure Readeck server > Readeck server features**: Auto-detect `/api/info`, force modern Readeck 0.22.2+ annotation fields, or force legacy compatibility
 * **Highlight update strategy**: Merge linked note/color edits, or force Readeck/KOReader to overwrite the other side
 * **Remote-deleted highlights**: Choose whether deleted Readeck annotations should be restored from KOReader or kept local-only
+
+Sync is paced for KOReader devices: article downloads can run with limited concurrency, highlight sync before article sync is split across local files so progress can render, and the article-list request only uses KOReader's async HTTP client when its async looper is already active. Otherwise it safely falls back to the blocking request path.
 
 ### Star / Like Sync
 
