@@ -112,6 +112,26 @@ function State.install(Readeck, deps)
         return true
     end
 
+    function Readeck:resetSettingsToDefaults()
+        self:cancelOAuthPolling()
+        Defaults.apply(self)
+        self.async_http_client = nil
+        self.dateparser = nil
+        self.directory = nil
+        self.download_scheduler = nil
+        self.oauth_poll_state = nil
+        self.oauth_prompt_dialog = nil
+        self.server_info = nil
+        self.server_url = nil
+        I18n.set_language_override(self.language_override or "")
+        self.sort_options = self:buildSortOptions()
+        if not self.rd_settings then
+            self.rd_settings = self:readSettings()
+        end
+        self:saveSettings()
+        self:reschedulePeriodicSync()
+    end
+
     function Readeck:init()
         Log:info("Initializing Readeck plugin")
         Defaults.apply(self)

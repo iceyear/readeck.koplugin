@@ -11,6 +11,7 @@ dofile("setupkoenv.lua")
 dofile("spec/front/unit/commonrequire.lua")
 
 local Defaults = require("readeck.core.defaults")
+local PluginMetadata = dofile(plugin_dir .. "/_meta.lua")
 local Readeck = dofile(plugin_dir .. "/main.lua")
 local lfs = require("libs/libkoreader-lfs")
 
@@ -89,7 +90,7 @@ local state = instance:callAPI("GET", server_url .. "/__state", {}, "", "", true
 assert(state and state.oauth_token_requests == 1, "mock OAuth token endpoint was not hit")
 assert(#state.oauth_clients == 1, "unexpected number of OAuth client registration requests")
 assert(
-    state.oauth_clients[1].software_version == Defaults.PLUGIN_VERSION,
+    state.oauth_clients[1].software_version == PluginMetadata.version,
     "OAuth client registration did not use the plugin version"
 )
 assert(#state.annotation_posts == 1, "unexpected number of annotation POST requests")

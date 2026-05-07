@@ -12,20 +12,20 @@ jobs:
   lua:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: leafo/gh-actions-lua@v11
+      - uses: leafo/gh-actions-lua@v13
         with:
           luaVersion: "5.1"
 
-      - uses: leafo/gh-actions-luarocks@v5
+      - uses: leafo/gh-actions-luarocks@v6
 
       - name: Install Lua development tools
         run: |
           eval "$(luarocks path --lua-version=5.1 --bin)"
           make deps
 
-      - uses: JohnnyMorganz/stylua-action@v4
+      - uses: JohnnyMorganz/stylua-action@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: latest
@@ -41,9 +41,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
+      - name: Resolve latest KOReader tag
+        id: koreader
+        run: |
+          tag="$(
+            git ls-remote --tags --refs https://github.com/koreader/koreader.git 'v*' \
+              | awk -F/ '{ print $NF }' \
+              | sort -V \
+              | tail -n 1
+          )"
+          if [ -z "$tag" ]; then
+            echo "Could not resolve latest KOReader tag." >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Using KOReader $tag"
+
+      - name: Clone KOReader latest tag
+        run: |
+          mkdir -p references
+          git clone --depth 1 --branch "${{ steps.koreader.outputs.tag }}" https://github.com/koreader/koreader.git references/koreader
+
+      - name: Cache KOReader emulator runtime
+        id: koreader-runtime-cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            references/koreader/base/build/x86_64-pc-linux-gnu-debug
+            references/koreader/koreader-emulator-x86_64-pc-linux-gnu-debug
+          key: koreader-runtime-${{ runner.os }}-${{ steps.koreader.outputs.tag }}
 
       - name: Install KOReader build dependencies
+        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
@@ -77,32 +108,38 @@ jobs:
             unzip \
             wget
 
-      - name: Clone KOReader
-        run: |
-          mkdir -p references
-          git clone --depth 1 https://github.com/koreader/koreader.git references/koreader
-
       - name: Cache KOReader downloads
-        uses: actions/cache@v4
+        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v5
         with:
           path: references/koreader/base/thirdparty/*/build/downloads
-          key: koreader-downloads-${{ runner.os }}-${{ hashFiles('references/koreader/base/thirdparty/**/*.mk') }}
-          restore-keys: koreader-downloads-${{ runner.os }}-
+          key: koreader-downloads-${{ runner.os }}-${{ steps.koreader.outputs.tag }}-${{ hashFiles('references/koreader/base/thirdparty/**/*.mk') }}
+          restore-keys: |
+            koreader-downloads-${{ runner.os }}-${{ steps.koreader.outputs.tag }}-
+            koreader-downloads-${{ runner.os }}-
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ccache
-          key: koreader-ccache-${{ runner.os }}-${{ github.sha }}
-          restore-keys: koreader-ccache-${{ runner.os }}-
+          key: koreader-ccache-${{ runner.os }}-${{ steps.koreader.outputs.tag }}-${{ github.sha }}
+          restore-keys: |
+            koreader-ccache-${{ runner.os }}-${{ steps.koreader.outputs.tag }}-
+            koreader-ccache-${{ runner.os }}-
 
       - name: Fetch KOReader third-party sources
+        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
         run: ./kodev fetch-thirdparty
         working-directory: references/koreader
 
       - name: Build KOReader emulator runtime
+        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
         run: ./kodev build emulator
         working-directory: references/koreader
+
+      - name: Validate KOReader emulator runtime
+        run: test -x references/koreader/koreader-emulator-x86_64-pc-linux-gnu-debug/koreader/luajit
 
       - name: KOReader runtime smoke test
         run: make koreader-runtime-smoke

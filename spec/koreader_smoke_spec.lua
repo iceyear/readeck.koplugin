@@ -41,6 +41,10 @@ local function install_koreader_stubs()
     end
     package.preload["device"] = function()
         return {
+            canOpenLink = true,
+            openLink = function()
+                return true
+            end,
             screen = {
                 getWidth = function()
                     return 600
@@ -359,15 +363,16 @@ local function run_menu_smoke()
     assert.is_true(table.concat(texts, "\n"):find("Highlights", 1, true) ~= nil)
     assert.is_true(table.concat(texts, "\n"):find("Periodic sync", 1, true) ~= nil)
     assert.is_true(table.concat(texts, "\n"):find("Configure Readeck client", 1, true) ~= nil)
+    assert.is_true(table.concat(texts, "\n"):find("About", 1, true) ~= nil)
+    assert.is_true(table.concat(texts, "\n"):find("Restore default settings", 1, true) ~= nil)
     assert.is_false(table.concat(texts, "\n"):find("Sync current article highlights", 1, true) ~= nil)
 end
 
 describe("KOReader smoke", function()
     it("loads the plugin class and builds the main menu with KOReader-shaped APIs", function()
         run_menu_smoke()
-        local Defaults = require("readeck.core.defaults")
         local metadata = dofile("readeck.koplugin/_meta.lua")
-        assert.are.equal(Defaults.PLUGIN_VERSION, metadata.version)
+        assert.are.equal("0.1.0", metadata.version)
     end)
 
     it("shows current-article highlight sync only for opened Readeck articles", function()
@@ -391,6 +396,93 @@ describe("KOReader smoke", function()
 
         local texts = table.concat(collect_menu_texts(menu_items.readeck.sub_item_table_func()), "\n")
         assert.is_true(texts:find("Sync current article highlights", 1, true) ~= nil)
+    end)
+
+    it("opens the active OAuth verification link through KOReader's device API", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local opened_link
+        package.loaded["device"] = nil
+        package.preload["device"] = function()
+            return {
+                canOpenLink = function()
+                    return true
+                end,
+                openLink = function(_, link)
+                    opened_link = link
+                    return true
+                end,
+                screen = {
+                    getWidth = function()
+                        return 600
+                    end,
+                    getHeight = function()
+                        return 800
+                    end,
+                },
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local instance = setmetatable({
+            oauth_poll_state = {
+                done = false,
+                verification_uri_complete = "https://readeck.example/device?user_code=ABCD",
+                fallback_uri = "https://readeck.example/device",
+            },
+        }, { __index = Readeck })
+
+        assert.is_true(instance:openOAuthPollingLink())
+        assert.are.equal("https://readeck.example/device?user_code=ABCD", opened_link)
+    end)
+
+    it("restores defaults and clears credentials", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local saved_settings
+        local rescheduled = false
+        local instance = setmetatable({
+            rd_settings = {
+                saveSetting = function(_, key, value)
+                    if key == "readeck" then
+                        saved_settings = value
+                    end
+                end,
+                flush = function() end,
+            },
+            server_url = "https://readeck.example",
+            auth_token = "api-secret",
+            access_token = "access-secret",
+            oauth_client_id = "client-id",
+            oauth_refresh_token = "refresh-secret",
+            cached_auth_token = "api-secret",
+            cached_server_url = "https://readeck.example",
+            cached_auth_method = "api_token",
+            directory = "/tmp/readeck",
+            download_queue = { "https://example/article" },
+            periodic_sync_enabled = true,
+            language_override = "zh-cn",
+            reschedulePeriodicSync = function()
+                rescheduled = true
+            end,
+        }, { __index = Readeck })
+
+        instance:resetSettingsToDefaults()
+
+        assert.is_nil(instance.server_url)
+        assert.is_nil(instance.directory)
+        assert.are.equal("", instance.auth_token)
+        assert.are.equal("", instance.access_token)
+        assert.are.equal("", instance.oauth_client_id)
+        assert.are.equal("", instance.oauth_refresh_token)
+        assert.are.same({}, instance.download_queue)
+        assert.is_false(instance.periodic_sync_enabled)
+        assert.are.equal("", instance.language_override)
+        assert.is_true(rescheduled)
+        assert.are.equal("", saved_settings.auth_token)
+        assert.are.equal("", saved_settings.access_token)
+        assert.are.equal("", saved_settings.oauth_refresh_token)
     end)
 
     it("imports Readeck annotations into KOReader sidecars during highlight sync", function()

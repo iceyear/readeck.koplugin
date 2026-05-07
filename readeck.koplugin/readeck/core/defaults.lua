@@ -1,6 +1,5 @@
 local Defaults = {}
 
-Defaults.PLUGIN_VERSION = "0.1.0"
 Defaults.ARTICLE_ID_SUFFIX = " [rd-id_"
 Defaults.ARTICLE_ID_POSTFIX = "]"
 Defaults.DOWNLOAD_FAILED = 1

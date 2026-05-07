@@ -1,5 +1,6 @@
 local BD = require("ui/bidi")
 local ButtonDialog = require("ui/widget/buttondialog")
+local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
 local NetworkMgr = require("ui/network/manager")
 local RadioButtonWidget = require("ui/widget/radiobuttonwidget")
@@ -32,6 +33,7 @@ end
 function SettingsMenu.install(Readeck, deps)
     local L = deps.L
     local T = deps.T
+    local PLUGIN_VERSION = deps.PLUGIN_VERSION or L("unknown")
 
     function Readeck:getLanguageOverrideLabel()
         local language = self.language_override or ""
@@ -39,10 +41,10 @@ function SettingsMenu.install(Readeck, deps)
             return L("Follow KOReader language")
         end
         if language == "en" then
-            return L("English")
+            return "English"
         end
         if language == "zh-cn" then
-            return L("Simplified Chinese")
+            return "简体中文"
         end
         return language
     end
@@ -50,8 +52,8 @@ function SettingsMenu.install(Readeck, deps)
     function Readeck:setLanguageOverride(touchmenu_instance)
         local options = {
             { "", L("Follow KOReader language") },
-            { "en", L("English") },
-            { "zh-cn", L("Simplified Chinese") },
+            { "en", "English" },
+            { "zh-cn", "简体中文" },
         }
         local radio_buttons = {}
         for _, option in ipairs(options) do
@@ -152,6 +154,56 @@ function SettingsMenu.install(Readeck, deps)
                     end
                 end
             end,
+        }))
+    end
+
+    function Readeck:confirmResetSettings(touchmenu_instance)
+        UIManager:show(ConfirmBox:new({
+            text = L([[Restore all Readeck settings to defaults?
+
+This will clear the server URL, API token, OAuth tokens, download queue, and sync options.]]),
+            ok_text = L("Restore"),
+            ok_callback = function()
+                self:resetSettingsToDefaults()
+                if touchmenu_instance then
+                    touchmenu_instance:updateItems()
+                end
+                UIManager:show(InfoMessage:new({
+                    text = L("Readeck settings restored to defaults."),
+                }))
+            end,
+        }))
+    end
+
+    function Readeck:showHelpDialog()
+        UIManager:show(InfoMessage:new({
+            text = L(
+                [[Download directory: use a directory that is exclusively used by the Readeck plugin. Existing files in this directory risk being deleted.
+
+Articles marked as finished or 100% read can be archived or deleted in Readeck. Those actions can also run automatically when syncing if the 'Process completion actions when syncing' option is enabled.
+
+Beta: reading progress below 100% can sync both ways between KOReader and Readeck without archiving the article.
+
+Beta: periodic sync can run while KOReader is open.
+
+Highlight sync merges Readeck annotations into KOReader highlights and exports new KOReader highlights back to Readeck.
+
+The 'Remove local files missing from Readeck' option will remove local files that no longer exist on the server.]]
+            ),
+        }))
+    end
+
+    function Readeck:showAboutDialog()
+        UIManager:show(InfoMessage:new({
+            text = T(
+                L([[Readeck for KOReader
+Version: %1
+
+Synchronises articles with a Readeck server.
+
+More details: https://readeck.org]]),
+                PLUGIN_VERSION
+            ),
         }))
     end
 
@@ -542,25 +594,33 @@ function SettingsMenu.install(Readeck, deps)
                 },
             },
             {
+                text = L("Restore default settings"),
+                help_text = L("Clear all Readeck plugin settings, including authentication credentials."),
+                keep_menu_open = true,
+                separator = true,
+                callback = function(touchmenu_instance)
+                    self:confirmResetSettings(touchmenu_instance)
+                end,
+            },
+            {
                 text = L("Help"),
                 keep_menu_open = true,
-                callback = function()
-                    UIManager:show(InfoMessage:new({
-                        text = L(
-                            [[Download directory: use a directory that is exclusively used by the Readeck plugin. Existing files in this directory risk being deleted.
-
-Articles marked as finished or 100% read can be archived or deleted in Readeck. Those actions can also run automatically when syncing if the 'Process completion actions when syncing' option is enabled.
-
-Beta: reading progress below 100% can sync both ways between KOReader and Readeck without archiving the article.
-
-Beta: periodic sync can run while KOReader is open.
-
-Highlight sync merges Readeck annotations into KOReader highlights and exports new KOReader highlights back to Readeck.
-
-The 'Remove local files missing from Readeck' option will remove local files that no longer exist on the server.]]
-                        ),
-                    }))
-                end,
+                sub_item_table = {
+                    {
+                        text = L("Usage notes"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:showHelpDialog()
+                        end,
+                    },
+                    {
+                        text = L("About"),
+                        keep_menu_open = true,
+                        callback = function()
+                            self:showAboutDialog()
+                        end,
+                    },
+                },
             },
         }
     end
