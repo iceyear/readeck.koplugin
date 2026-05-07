@@ -48,8 +48,10 @@ jobs:
       - name: Resolve latest KOReader tag
         id: koreader
         run: |
+          remote="https://github.com/koreader/koreader.git"
+          tag_refs="$(git ls-remote --tags --refs "$remote" 'v*')"
           tag="$(
-            git ls-remote --tags --refs https://github.com/koreader/koreader.git 'v*' \
+            printf '%s\n' "$tag_refs" \
               | awk -F/ '{ print $NF }' \
               | sort -V \
               | tail -n 1
@@ -58,25 +60,60 @@ jobs:
             echo "Could not resolve latest KOReader tag." >&2
             exit 1
           fi
+          commit="$(git ls-remote --tags "$remote" "refs/tags/$tag^{}" | awk '{ print $1 }')"
+          if [ -z "$commit" ]; then
+            commit="$(
+              printf '%s\n' "$tag_refs" \
+                | awk -v ref="refs/tags/$tag" '$2 == ref { print $1; exit }'
+            )"
+          fi
+          if [ -z "$commit" ]; then
+            echo "Could not resolve KOReader commit for $tag." >&2
+            exit 1
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "Using KOReader $tag"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "Using KOReader $tag ($commit)"
 
       - name: Clone KOReader latest tag
         run: |
           mkdir -p references
-          git clone --depth 1 --branch "${{ steps.koreader.outputs.tag }}" https://github.com/koreader/koreader.git references/koreader
+          git init references/koreader
+          cd references/koreader
+          git remote add origin https://github.com/koreader/koreader.git
+          git fetch --depth 1 origin "${{ steps.koreader.outputs.commit }}"
+          git checkout --detach FETCH_HEAD
 
       - name: Cache KOReader emulator runtime
         id: koreader-runtime-cache
         uses: actions/cache@v5
         with:
           path: |
-            references/koreader/base/build/x86_64-pc-linux-gnu-debug
-            references/koreader/koreader-emulator-x86_64-pc-linux-gnu-debug
+            references/koreader/base/build/*
+            references/koreader/koreader-emulator-*
           key: koreader-runtime-${{ runner.os }}-${{ steps.koreader.outputs.tag }}
 
+      - name: Locate cached KOReader emulator runtime
+        id: cached-koreader-runtime
+        run: |
+          runtime_dir=""
+          if [ "${{ steps.koreader-runtime-cache.outputs.cache-hit }}" = "true" ]; then
+            while IFS= read -r luajit_path; do
+              if [ -x "$luajit_path" ]; then
+                runtime_dir="$(dirname "$luajit_path")"
+                break
+              fi
+            done < <(find references/koreader -path '*/koreader-emulator-*/koreader/luajit' -print)
+          fi
+          echo "runtime_dir=$runtime_dir" >> "$GITHUB_OUTPUT"
+          if [ -n "$runtime_dir" ]; then
+            echo "Using cached KOReader runtime at $runtime_dir"
+          else
+            echo "KOReader runtime cache miss or incomplete; a build is required."
+          fi
+
       - name: Install KOReader build dependencies
-        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
+        if: steps.cached-koreader-runtime.outputs.runtime_dir == ''
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
@@ -111,7 +148,7 @@ jobs:
             wget
 
       - name: Cache KOReader downloads
-        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
+        if: steps.cached-koreader-runtime.outputs.runtime_dir == ''
         uses: actions/cache@v5
         with:
           path: references/koreader/base/thirdparty/*/build/downloads
@@ -121,7 +158,7 @@ jobs:
             koreader-downloads-${{ runner.os }}-
 
       - name: Cache ccache
-        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
+        if: steps.cached-koreader-runtime.outputs.runtime_dir == ''
         uses: actions/cache@v5
         with:
           path: ~/.cache/ccache
@@ -131,17 +168,34 @@ jobs:
             koreader-ccache-${{ runner.os }}-
 
       - name: Fetch KOReader third-party sources
-        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
+        if: steps.cached-koreader-runtime.outputs.runtime_dir == ''
         run: ./kodev fetch-thirdparty
         working-directory: references/koreader
 
       - name: Build KOReader emulator runtime
-        if: steps.koreader-runtime-cache.outputs.cache-hit != 'true'
+        if: steps.cached-koreader-runtime.outputs.runtime_dir == ''
         run: ./kodev build emulator
         working-directory: references/koreader
 
-      - name: Validate KOReader emulator runtime
-        run: test -x references/koreader/koreader-emulator-x86_64-pc-linux-gnu-debug/koreader/luajit
+      - name: Locate KOReader emulator runtime
+        run: |
+          runtime_dir=""
+          while IFS= read -r luajit_path; do
+            if [ -x "$luajit_path" ]; then
+              runtime_dir="$(dirname "$luajit_path")"
+              break
+            fi
+          done < <(find references/koreader -path '*/koreader-emulator-*/koreader/luajit' -print)
+          if [ -z "$runtime_dir" ]; then
+            echo "Could not find KOReader emulator runtime." >&2
+            echo "Available emulator directories:" >&2
+            find references/koreader -maxdepth 3 -type d -name 'koreader-emulator*' -print >&2
+            echo "Available luajit files:" >&2
+            find references/koreader -maxdepth 6 -name luajit -print >&2
+            exit 1
+          fi
+          echo "KOREADER_BUILD_DIR=$runtime_dir" >> "$GITHUB_ENV"
+          echo "Using KOReader runtime at $runtime_dir"
 
       - name: KOReader runtime smoke test
         run: make koreader-runtime-smoke
