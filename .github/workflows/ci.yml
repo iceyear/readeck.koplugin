@@ -81,8 +81,15 @@ jobs:
           git init references/koreader
           cd references/koreader
           git remote add origin https://github.com/koreader/koreader.git
-          git fetch --depth 1 origin "${{ steps.koreader.outputs.commit }}"
-          git checkout --detach FETCH_HEAD
+          git fetch --depth 1 origin "refs/tags/${{ steps.koreader.outputs.tag }}:refs/tags/${{ steps.koreader.outputs.tag }}"
+          git checkout --detach "${{ steps.koreader.outputs.tag }}^{commit}"
+          git describe --tags --always
+
+      - name: Initialize KOReader submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --depth 1 --jobs 3 --init --recursive
+        working-directory: references/koreader
 
       - name: Cache KOReader emulator runtime
         id: koreader-runtime-cache
