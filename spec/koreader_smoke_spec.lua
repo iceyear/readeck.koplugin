@@ -2176,6 +2176,121 @@ describe("KOReader smoke", function()
         assert.is_nil(instance.download_progress_state)
     end)
 
+    it("updates visible article download progress without closing and re-showing it", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local shown = {}
+        local closed = {}
+        local dirty_count = 0
+
+        package.loaded["ui/widget/infomessage"] = nil
+        package.preload["ui/widget/infomessage"] = function()
+            return {
+                new = function(_, options)
+                    options = options or {}
+                    options.free = function(self)
+                        self.free_count = (self.free_count or 0) + 1
+                    end
+                    options.init = function(self)
+                        self.init_count = (self.init_count or 0) + 1
+                        self.movable = self.movable or {}
+                    end
+                    options:init()
+                    return options
+                end,
+            }
+        end
+        package.loaded["ui/uimanager"] = nil
+        package.preload["ui/uimanager"] = function()
+            return {
+                show = function(_, widget)
+                    table.insert(shown, widget)
+                end,
+                close = function(_, widget)
+                    table.insert(closed, widget)
+                end,
+                forceRePaint = function() end,
+                setDirty = function()
+                    dirty_count = dirty_count + 1
+                end,
+                scheduleIn = function(_, delay_or_callback, maybe_callback)
+                    local callback = maybe_callback or delay_or_callback
+                    callback()
+                end,
+                unschedule = function() end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local instance = setmetatable({}, { __index = Readeck })
+
+        instance:showDownloadProgress({ completed = 0, downloaded = 0, skipped = 0, failed = 0 }, 2)
+        instance:showDownloadProgress({ completed = 1, downloaded = 1, skipped = 0, failed = 0 }, 2)
+
+        assert.are.equal(1, #shown)
+        assert.are.equal(0, #closed)
+        assert.are.equal(1, shown[1].free_count)
+        assert.are.equal(2, shown[1].init_count)
+        assert.is_true(dirty_count > 0)
+        assert.is_true(shown[1].text:find("1/2", 1, true) ~= nil)
+    end)
+
+    it("updates highlight sync progress without closing and re-showing it", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local shown = {}
+        local closed = {}
+
+        package.loaded["ui/widget/infomessage"] = nil
+        package.preload["ui/widget/infomessage"] = function()
+            return {
+                new = function(_, options)
+                    options = options or {}
+                    options.free = function(self)
+                        self.free_count = (self.free_count or 0) + 1
+                    end
+                    options.init = function(self)
+                        self.init_count = (self.init_count or 0) + 1
+                        self.movable = self.movable or {}
+                    end
+                    options:init()
+                    return options
+                end,
+            }
+        end
+        package.loaded["ui/uimanager"] = nil
+        package.preload["ui/uimanager"] = function()
+            return {
+                show = function(_, widget)
+                    table.insert(shown, widget)
+                end,
+                close = function(_, widget)
+                    table.insert(closed, widget)
+                end,
+                forceRePaint = function() end,
+                setDirty = function() end,
+                scheduleIn = function(_, delay_or_callback, maybe_callback)
+                    local callback = maybe_callback or delay_or_callback
+                    callback()
+                end,
+                unschedule = function() end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local instance = setmetatable({}, { __index = Readeck })
+
+        local info = instance:showSyncStatus("Syncing highlights…")
+        info = instance:showSyncStatus("Syncing highlights… 1/2", info)
+
+        assert.are.equal(1, #shown)
+        assert.are.equal(0, #closed)
+        assert.are.equal(shown[1], info)
+        assert.are.equal("Syncing highlights… 1/2", shown[1].text)
+        assert.are.equal(1, shown[1].free_count)
+        assert.are.equal(2, shown[1].init_count)
+    end)
+
     it("formats highlight sync counts in article sync results", function()
         package.path = "./readeck.koplugin/?.lua;" .. package.path
         install_koreader_stubs()

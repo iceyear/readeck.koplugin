@@ -1,6 +1,7 @@
 local Api = require("readeck.net.api")
 local InfoMessage = require("ui/widget/infomessage")
 local JSON = require("json")
+local ProgressMessage = require("readeck.ui.progress_message")
 local Status = require("readeck.sync.status")
 local UIManager = require("ui/uimanager")
 local util = require("util")
@@ -298,7 +299,14 @@ function Articles.install(Readeck, deps)
         return by_id
     end
 
-    function Readeck:showSyncStatus(text)
+    function Readeck:showSyncStatus(text, previous_info)
+        if previous_info then
+            if ProgressMessage.update(previous_info, text) then
+                return previous_info
+            end
+            self:closeSyncStatus(previous_info)
+        end
+
         local info = InfoMessage:new({ text = text })
         UIManager:show(info)
         UIManager:forceRePaint()
@@ -379,8 +387,7 @@ function Articles.install(Readeck, deps)
         self:syncHighlightsForLocalFilesAsync({
             quiet = true,
             on_progress = function(completed, total)
-                self:closeSyncStatus(info)
-                info = self:showSyncStatus(T(L("Syncing highlights… %1/%2"), completed, total))
+                info = self:showSyncStatus(T(L("Syncing highlights… %1/%2"), completed, total), info)
             end,
         }, function(highlight_ok, highlight_counts)
             if highlight_ok == false and not highlight_counts then

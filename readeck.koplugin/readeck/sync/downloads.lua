@@ -6,6 +6,7 @@ local FFIUtil = require("ffi/util")
 local InfoMessage = require("ui/widget/infomessage")
 local Metadata = require("readeck.storage.metadata")
 local Progress = require("readeck.sync.progress")
+local ProgressMessage = require("readeck.ui.progress_message")
 local Scheduler = require("readeck.sync.scheduler")
 local UIManager = require("ui/uimanager")
 local lfs = require("libs/libkoreader-lfs")
@@ -474,7 +475,14 @@ function Downloads.install(Readeck, deps)
         end
 
         local message = self:formatDownloadProgressMessage(counts, total, action_counts)
-        self:closeDownloadProgress()
+        if self.download_progress_info then
+            if ProgressMessage.update(self.download_progress_info, message) then
+                self.download_progress_hidden = false
+                return
+            end
+            self:closeDownloadProgress()
+        end
+
         local progress_info
         progress_info = InfoMessage:new({
             text = message,
