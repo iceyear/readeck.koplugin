@@ -22,6 +22,7 @@ Readeck.addToMainMenu({
     completion_action_read_enabled = false,
     archive_instead_of_delete = true,
     process_completion_on_sync = false,
+    sync_reading_progress = true,
     remove_local_missing_remote = false,
     export_highlights_before_sync = true,
     auto_export_highlights = true,

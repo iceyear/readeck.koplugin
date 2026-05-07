@@ -38,6 +38,18 @@ describe("readeck.highlights", function()
         assert.are.equal(10, payload.end_offset)
     end)
 
+    it("maps KOReader highlight colors to Readeck colors", function()
+        local payload = Highlights.build_payload({
+            drawer = "lighten",
+            color = "purple",
+            text = "highlighted text",
+            pos0 = "section/p[2].4",
+            pos1 = "section/p[2].18",
+        })
+
+        assert.are.equal("blue", payload.color)
+    end)
+
     it("detects overlapping highlights", function()
         local local_highlight = Highlights.build_payload({
             drawer = "lighten",

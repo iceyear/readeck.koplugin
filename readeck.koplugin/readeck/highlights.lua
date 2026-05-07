@@ -1,10 +1,16 @@
 local Highlights = {}
 
-local ALLOWED_HIGHLIGHT_COLORS = {
-    red = true,
-    green = true,
-    blue = true,
-    yellow = true,
+local READECK_HIGHLIGHT_COLORS = {
+    blue = "blue",
+    cyan = "blue",
+    gray = "yellow",
+    green = "green",
+    none = "none",
+    olive = "green",
+    orange = "yellow",
+    purple = "blue",
+    red = "red",
+    yellow = "yellow",
 }
 
 local function split_path(selector)
@@ -108,9 +114,11 @@ function Highlights.build_payload(h)
         note = note:sub(1, 1024)
     end
 
+    local color = READECK_HIGHLIGHT_COLORS[tostring(h.color or ""):lower()] or "yellow"
+
     return {
         text = h.text,
-        color = (h.color and ALLOWED_HIGHLIGHT_COLORS[h.color]) and h.color or "yellow",
+        color = color,
         note = note,
         start_selector = start_selector,
         start_offset = s_offset,

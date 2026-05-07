@@ -56,5 +56,13 @@ describe("readeck.i18n", function()
             "即将在 Readeck 中归档：%1",
             I18n.translate("Will archive in Readeck: %1", nil, settings("zh_CN"))
         )
+        assert.are.equal(
+            "同步阅读进度到 Readeck",
+            I18n.translate("Sync reading progress to Readeck", nil, settings("zh_CN"))
+        )
+        assert.are.equal(
+            "已同步阅读进度：%1",
+            I18n.translate("Reading progress synced: %1", nil, settings("zh_CN"))
+        )
     end)
 end)

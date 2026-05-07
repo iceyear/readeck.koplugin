@@ -124,6 +124,7 @@ function Readeck:init()
     self.completion_action_sync_policy_version = COMPLETION_ACTION_SYNC_POLICY_VERSION
     self.remove_local_missing_remote = false
     self.archive_instead_of_delete = true
+    self.sync_reading_progress = true
     self.send_review_as_tags = false
     self.filter_tag = ""
     self.sort_param = "-created" -- default to most recent first
@@ -211,6 +212,9 @@ function Readeck:init()
         self.archive_instead_of_delete = settings.archive_instead_of_delete
     elseif settings.is_archiving_deleted ~= nil then
         self.archive_instead_of_delete = settings.is_archiving_deleted
+    end
+    if settings.sync_reading_progress ~= nil then
+        self.sync_reading_progress = settings.sync_reading_progress
     end
     if self.completion_action_sync_policy_version < COMPLETION_ACTION_SYNC_POLICY_VERSION then
         if
@@ -513,6 +517,16 @@ function Readeck:addToMainMenu(menu_items)
                                 end,
                                 callback = function()
                                     self.process_completion_on_sync = not self.process_completion_on_sync
+                                    self:saveSettings()
+                                end,
+                            },
+                            {
+                                text = L("Sync reading progress to Readeck"),
+                                checked_func = function()
+                                    return self.sync_reading_progress
+                                end,
+                                callback = function()
+                                    self.sync_reading_progress = not self.sync_reading_progress
                                     self:saveSettings()
                                 end,
                             },
@@ -881,6 +895,9 @@ function Readeck:appendCompletionResultParts(parts, counts)
     if (counts.remote_deleted or 0) > 0 then
         table.insert(parts, T(L("Deleted from Readeck: %1"), counts.remote_deleted))
     end
+    if (counts.remote_progress_updated or 0) > 0 then
+        table.insert(parts, T(L("Reading progress synced: %1"), counts.remote_progress_updated))
+    end
     if (counts.local_removed or 0) > 0 then
         table.insert(parts, T(L("Removed from KOReader: %1"), counts.local_removed))
     end
@@ -930,6 +947,9 @@ function Readeck:formatCompletionPlanMessage(plan)
     end
     if (plan.local_remove_candidates or 0) > 0 then
         table.insert(parts, T(L("Will remove from KOReader: %1"), plan.local_remove_candidates))
+    end
+    if (plan.remote_progress_candidates or 0) > 0 then
+        table.insert(parts, T(L("Will sync reading progress: %1"), plan.remote_progress_candidates))
     end
     if #parts == 1 then
         table.insert(parts, L("No local articles needed processing."))
@@ -2356,8 +2376,8 @@ function Readeck:isCompletionProcessingEnabledForMode(mode)
     return not mode or mode == "manual" or self.process_completion_on_sync ~= false
 end
 
-function Readeck:getLocalCompletionAction(path)
-    local doc_settings = DocSettings:open(path)
+function Readeck:getLocalCompletionAction(path, doc_settings)
+    doc_settings = doc_settings or DocSettings:open(path)
     local summary = doc_settings:readSetting("summary")
     local status = summary and summary.status
     local percent_finished = doc_settings:readSetting("percent_finished")
@@ -2376,16 +2396,41 @@ function Readeck:getLocalCompletionAction(path)
     end
 end
 
+function Readeck:percentFinishedToReadeckProgress(percent_finished)
+    percent_finished = tonumber(percent_finished)
+    if not percent_finished then
+        return nil
+    end
+    local progress
+    if percent_finished <= 1 then
+        progress = Math.round(percent_finished * 100)
+    else
+        progress = Math.round(percent_finished)
+    end
+    return math.max(0, math.min(100, progress))
+end
+
+function Readeck:getLocalReadingProgressAction(doc_settings)
+    local progress = self:percentFinishedToReadeckProgress(doc_settings:readSetting("percent_finished"))
+    if progress == nil then
+        return nil
+    end
+    return {
+        progress = progress,
+    }
+end
+
 function Readeck:collectLocalFileActions(options)
     options = options or {}
     local completion_enabled = options.completion_enabled ~= false
     local completion_actions_enabled = completion_enabled
         and (self.completion_action_finished_enabled or self.completion_action_read_enabled)
-    local should_scan = completion_actions_enabled or self.send_review_as_tags
+    local should_scan = completion_actions_enabled or self.sync_reading_progress or self.send_review_as_tags
     local files = {}
     local plan = {
         remote_archive_candidates = 0,
         remote_delete_candidates = 0,
+        remote_progress_candidates = 0,
         local_remove_candidates = 0,
     }
     if not should_scan then
@@ -2399,8 +2444,9 @@ function Readeck:collectLocalFileActions(options)
                 local file_action = {
                     path = entry_path,
                 }
+                local doc_settings = DocSettings:open(entry_path)
                 if completion_actions_enabled then
-                    local completion_action = self:getLocalCompletionAction(entry_path)
+                    local completion_action = self:getLocalCompletionAction(entry_path, doc_settings)
                     if completion_action and self:getArticleID(entry_path) then
                         file_action.completion_action = completion_action
                         if self.archive_instead_of_delete then
@@ -2409,6 +2455,17 @@ function Readeck:collectLocalFileActions(options)
                             plan.remote_delete_candidates = plan.remote_delete_candidates + 1
                         end
                         plan.local_remove_candidates = plan.local_remove_candidates + 1
+                    end
+                end
+                if
+                    self.sync_reading_progress
+                    and not file_action.completion_action
+                    and self:getArticleID(entry_path)
+                then
+                    local progress_action = self:getLocalReadingProgressAction(doc_settings)
+                    if progress_action then
+                        file_action.progress_action = progress_action
+                        plan.remote_progress_candidates = plan.remote_progress_candidates + 1
                     end
                 end
                 table.insert(files, file_action)
@@ -2461,7 +2518,35 @@ function Readeck:processLocalFiles(mode)
         end
         if local_file.completion_action then
             Status.add(counts, self:removeArticle(local_file.path, local_file.completion_action.mark_read_complete))
+        elseif local_file.progress_action then
+            Status.add(counts, self:syncReadingProgress(local_file.path, local_file.progress_action.progress))
         end
+    end
+    return counts
+end
+
+function Readeck:syncReadingProgress(path, progress)
+    local counts = Status.new_counts()
+    local id = self:getArticleID(path)
+    progress = tonumber(progress)
+    if not id or not progress then
+        return counts
+    end
+
+    local bodyJSON = JSON.encode({
+        read_progress = math.max(0, math.min(100, Math.round(progress))),
+    })
+    local headers = {
+        ["Content-type"] = "application/json",
+        ["Accept"] = "application/json, */*",
+        ["Content-Length"] = tostring(#bodyJSON),
+        ["Authorization"] = "Bearer " .. self.access_token,
+    }
+    local remote_ok = self:callAPI("PATCH", Api.paths.bookmark(id), headers, bodyJSON, "")
+    if remote_ok then
+        counts.remote_progress_updated = counts.remote_progress_updated + 1
+    else
+        counts.failed = counts.failed + 1
     end
     return counts
 end
@@ -2958,6 +3043,7 @@ function Readeck:saveSettings()
         archive_instead_of_delete = self.archive_instead_of_delete,
         process_completion_on_sync = self.process_completion_on_sync,
         completion_action_sync_policy_version = self.completion_action_sync_policy_version,
+        sync_reading_progress = self.sync_reading_progress,
         remove_local_missing_remote = self.remove_local_missing_remote,
         is_delete_finished = self.completion_action_finished_enabled,
         is_delete_read = self.completion_action_read_enabled,

@@ -10,6 +10,7 @@ describe("readeck.status", function()
         assert.are.equal(3, counts.remote_archived)
         assert.are.equal(3, counts.local_removed)
         assert.are.equal(0, counts.remote_deleted)
+        assert.are.equal(0, counts.remote_progress_updated)
     end)
 
     it("merges processed article ID sets", function()

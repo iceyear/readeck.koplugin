@@ -120,6 +120,9 @@ local function install_koreader_stubs()
             roundPercent = function(value)
                 return value
             end,
+            round = function(value)
+                return math.floor(value + 0.5)
+            end,
         }
     end
     package.preload["ui/widget/multiconfirmbox"] = function()
@@ -300,6 +303,7 @@ local function stub_instance()
         completion_action_read_enabled = false,
         archive_instead_of_delete = true,
         process_completion_on_sync = false,
+        sync_reading_progress = true,
         remove_local_missing_remote = false,
         export_highlights_before_sync = true,
         auto_export_highlights = true,
@@ -607,6 +611,103 @@ describe("KOReader smoke", function()
         assert.are.equal(0, counts.remote_archived)
     end)
 
+    it("syncs reading progress for local articles that are not being completed", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local article_path = "/tmp/readeck/In progress [rd-id_abc123].epub"
+        local encoded_body
+
+        package.loaded["json"] = nil
+        package.preload["json"] = function()
+            return {
+                encode = function(body)
+                    encoded_body = body
+                    return "{}"
+                end,
+                decode = function()
+                    return {}
+                end,
+            }
+        end
+        package.loaded["docsettings"] = nil
+        package.preload["docsettings"] = function()
+            return {
+                hasSidecarFile = function(_, path)
+                    return path == article_path
+                end,
+                open = function()
+                    return {
+                        readSetting = function(_, key)
+                            if key == "summary" then
+                                return { status = "reading" }
+                            end
+                            if key == "percent_finished" then
+                                return 0.37
+                            end
+                        end,
+                    }
+                end,
+            }
+        end
+        package.loaded["libs/libkoreader-lfs"] = nil
+        package.preload["libs/libkoreader-lfs"] = function()
+            return {
+                attributes = function(path, key)
+                    local attrs
+                    if path == article_path then
+                        attrs = { mode = "file" }
+                    end
+                    if attrs and key then
+                        return attrs[key]
+                    end
+                    return attrs
+                end,
+                dir = function(path)
+                    local entries = { ".", "..", "In progress [rd-id_abc123].epub" }
+                    local index = 0
+                    return function()
+                        if path ~= "/tmp/readeck" then
+                            return nil
+                        end
+                        index = index + 1
+                        return entries[index]
+                    end
+                end,
+                touch = function()
+                    return true
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local api_calls = {}
+        local instance = setmetatable({
+            directory = "/tmp/readeck",
+            access_token = "token",
+            completion_action_finished_enabled = true,
+            completion_action_read_enabled = false,
+            archive_instead_of_delete = true,
+            process_completion_on_sync = true,
+            sync_reading_progress = true,
+            send_review_as_tags = false,
+            getBearerToken = function()
+                return true
+            end,
+            callAPI = function(_, method, path)
+                table.insert(api_calls, { method = method, path = path })
+                return true
+            end,
+        }, { __index = Readeck })
+
+        local counts = instance:processLocalFiles("sync")
+
+        assert.are.equal(1, counts.remote_progress_updated)
+        assert.are.equal(1, #api_calls)
+        assert.are.equal("PATCH", api_calls[1].method)
+        assert.are.equal("/api/bookmarks/abc123", api_calls[1].path)
+        assert.are.equal(37, encoded_body.read_progress)
+    end)
+
     it("formats article sync progress with checked, downloaded, skipped, and local action counts", function()
         package.path = "./readeck.koplugin/?.lua;" .. package.path
         install_koreader_stubs()
@@ -623,6 +724,7 @@ describe("KOReader smoke", function()
             14,
             {
                 remote_archived = 1,
+                remote_progress_updated = 1,
                 local_removed = 1,
             }
         )
@@ -632,6 +734,7 @@ describe("KOReader smoke", function()
         assert.is_true(message:find("Downloaded: 1", 1, true) ~= nil)
         assert.is_true(message:find("Skipped: 2", 1, true) ~= nil)
         assert.is_true(message:find("Archived in Readeck: 1", 1, true) ~= nil)
+        assert.is_true(message:find("Reading progress synced: 1", 1, true) ~= nil)
         assert.is_true(message:find("Removed from KOReader: 1", 1, true) ~= nil)
     end)
 
