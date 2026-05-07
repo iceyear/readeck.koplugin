@@ -33,6 +33,8 @@ function Settings.install(Readeck)
             experimental_async_downloads = self.experimental_async_downloads,
             auto_export_highlights = self.auto_export_highlights,
             export_highlights_before_sync = self.export_highlights_before_sync,
+            highlight_conflict_policy = self.highlight_conflict_policy,
+            highlight_feature_policy = self.highlight_feature_policy,
             highlight_sync_policy = self.highlight_sync_policy,
             periodic_sync_enabled = self.periodic_sync_enabled,
             periodic_sync_interval_minutes = self.periodic_sync_interval_minutes,

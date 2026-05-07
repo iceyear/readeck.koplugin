@@ -94,6 +94,14 @@ describe("readeck.i18n", function()
         )
         assert.are.equal("尊重远端删除", I18n.translate("Respect remote deletions", nil, settings("zh_CN")))
         assert.are.equal(
+            "合并本地和远端变更",
+            I18n.translate("Merge local and remote changes", nil, settings("zh_CN"))
+        )
+        assert.are.equal(
+            "新版 Readeck（0.22.2+）",
+            I18n.translate("Modern Readeck (0.22.2+)", nil, settings("zh_CN"))
+        )
+        assert.are.equal(
             "仅保留在本地的高亮：%1",
             I18n.translate("Highlights kept local only: %1", nil, settings("zh_CN"))
         )

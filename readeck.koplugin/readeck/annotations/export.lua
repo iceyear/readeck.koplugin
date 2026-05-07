@@ -6,6 +6,7 @@ local Features = require("readeck.core.features")
 local Highlights = require("readeck.annotations.highlights")
 local InfoMessage = require("ui/widget/infomessage")
 local JSON = require("json")
+local LinkedSync = require("readeck.annotations.linked_sync")
 local NetworkMgr = require("ui/network/manager")
 local UIManager = require("ui/uimanager")
 local lfs = require("libs/libkoreader-lfs")
@@ -22,6 +23,9 @@ local function new_highlight_counts()
         import_skipped = 0,
         import_failed = 0,
         remote_deleted = 0,
+        updated_local = 0,
+        updated_remote = 0,
+        conflicts = 0,
     }
 end
 
@@ -107,7 +111,7 @@ function Export.install(Readeck, deps)
         local ids = {}
         for _, remote_highlight in ipairs(remote_highlights or {}) do
             if remote_highlight.id then
-                ids[tostring(remote_highlight.id)] = true
+                ids[tostring(remote_highlight.id)] = remote_highlight
             end
         end
         return ids
@@ -121,8 +125,19 @@ function Export.install(Readeck, deps)
         return remote_id ~= nil and tostring(remote_id) ~= "" and not remote_highlight_ids[tostring(remote_id)]
     end
 
-    function Readeck:addRemoteHighlightToAnnotations(path, annotations, remote_highlight, options)
-        local local_annotation, reason = Highlights.remote_to_local_annotation(remote_highlight)
+    function Readeck:getHighlightPayloadProfile()
+        local policy = self.highlight_feature_policy or "auto"
+        if policy == "modern" then
+            return { notes = true, none_color = true }
+        end
+        if policy == "legacy" then
+            return { notes = false, none_color = false }
+        end
+        return Features.highlight_payload_profile(self:refreshServerInfo(true) or self.server_info)
+    end
+
+    function Readeck:addRemoteHighlightToAnnotations(path, annotations, remote_highlight, profile, options)
+        local local_annotation, reason = Highlights.remote_to_local_annotation(remote_highlight, profile)
         if not local_annotation then
             return false, reason
         end
@@ -162,7 +177,8 @@ function Export.install(Readeck, deps)
             if self:remoteHighlightExistsLocally(annotations, remote_highlight, profile) then
                 counts.import_skipped = counts.import_skipped + 1
             else
-                local ok, reason = self:addRemoteHighlightToAnnotations(path, annotations, remote_highlight, options)
+                local ok, reason =
+                    self:addRemoteHighlightToAnnotations(path, annotations, remote_highlight, profile, options)
                 if ok then
                     counts.imported = counts.imported + 1
                 else
@@ -198,6 +214,15 @@ function Export.install(Readeck, deps)
         end
         if (counts.remote_deleted or 0) > 0 then
             table.insert(message_parts, T(L("Kept local only: %1"), counts.remote_deleted))
+        end
+        if (counts.updated_local or 0) > 0 then
+            table.insert(message_parts, T(L("Updated in KOReader: %1"), counts.updated_local))
+        end
+        if (counts.updated_remote or 0) > 0 then
+            table.insert(message_parts, T(L("Updated in Readeck: %1"), counts.updated_remote))
+        end
+        if (counts.conflicts or 0) > 0 then
+            table.insert(message_parts, T(L("Conflicts merged: %1"), counts.conflicts))
         end
 
         if #message_parts > 0 then
@@ -243,26 +268,26 @@ function Export.install(Readeck, deps)
             existing_highlights = existing_highlights_raw
         end
 
-        local highlight_profile = Features.highlight_payload_profile(self.server_info or self:refreshServerInfo(true))
+        local highlight_profile = self:getHighlightPayloadProfile()
         local counts = new_highlight_counts()
         self:importRemoteHighlightsForPath(path, annotations, existing_highlights, highlight_profile, counts, options)
-        local remote_highlight_ids = self:indexRemoteHighlightsByID(existing_highlights)
+        local remote_highlights_by_id = self:indexRemoteHighlightsByID(existing_highlights)
         local local_annotations_changed = false
 
         for _, h in pairs(annotations) do
             local local_highlight, skip_reason = Highlights.build_payload(h, highlight_profile)
 
             if local_highlight then
-                if self:shouldKeepRemoteDeletedHighlightLocal(h, remote_highlight_ids) then
+                if self:shouldKeepRemoteDeletedHighlightLocal(h, remote_highlights_by_id) then
                     counts.remote_deleted = counts.remote_deleted + 1
                     Log:info("Keeping remote-deleted highlight local only:", h.readeck_annotation_id)
                 else
                     local is_overlapping = false
-                    local is_remote_linked = false
+                    local linked_remote_highlight = nil
                     for _, remote_h in ipairs(existing_highlights) do
                         if Highlights.local_matches_remote_id(h, remote_h) then
                             is_overlapping = true
-                            is_remote_linked = true
+                            linked_remote_highlight = remote_h
                             break
                         elseif Highlights.overlap(local_highlight, remote_h) then
                             is_overlapping = true
@@ -271,7 +296,18 @@ function Export.install(Readeck, deps)
                     end
 
                     if is_overlapping then
-                        if not is_remote_linked then
+                        if linked_remote_highlight then
+                            local changed = LinkedSync.sync(
+                                self,
+                                article_id,
+                                h,
+                                linked_remote_highlight,
+                                highlight_profile,
+                                counts,
+                                existing_highlights
+                            )
+                            local_annotations_changed = changed or local_annotations_changed
+                        else
                             counts.skipped = counts.skipped + 1
                             Log:info("Skipping overlapping highlight:", local_highlight.text)
                         end
@@ -295,11 +331,21 @@ function Export.install(Readeck, deps)
                         if result then
                             counts.success = counts.success + 1
                             if type(result) == "table" and result.id then
+                                local synced_result = {}
+                                for key, value in pairs(local_highlight) do
+                                    synced_result[key] = value
+                                end
+                                for key, value in pairs(result) do
+                                    synced_result[key] = value
+                                end
                                 h.readeck_annotation_id = result.id
+                                Highlights.apply_sync_snapshot(h, synced_result, highlight_profile)
                                 local_annotations_changed = true
-                                table.insert(existing_highlights, result)
-                                remote_highlight_ids[tostring(result.id)] = true
+                                table.insert(existing_highlights, synced_result)
+                                remote_highlights_by_id[tostring(result.id)] = synced_result
                             else
+                                Highlights.apply_sync_snapshot(h, local_highlight, highlight_profile)
+                                local_annotations_changed = true
                                 table.insert(existing_highlights, local_highlight)
                             end
                         else

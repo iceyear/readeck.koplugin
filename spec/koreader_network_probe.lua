@@ -71,6 +71,17 @@ local local_annotations = {
         pos1 = "section/p[2].14",
     },
     {
+        readeck_annotation_id = "remote-existing",
+        drawer = "lighten",
+        text = "remote text",
+        note = "updated local note",
+        color = "green",
+        readeck_synced_note = "remote note",
+        readeck_synced_color = "yellow",
+        pos0 = "section/p[1].0",
+        pos1 = "section/p[1].11",
+    },
+    {
         readeck_annotation_id = "deleted-remotely",
         drawer = "lighten",
         text = "remote deleted",
@@ -83,6 +94,7 @@ local ok, counts = instance:syncHighlightsForArticle(article_id, nil, local_anno
 assert(ok == true, "highlight sync failed")
 assert(counts.imported == 0, "pathless network probe should not import local sidecar highlights")
 assert(counts.success == 1, "local highlight was not exported")
+assert(counts.updated_remote == 1, "linked local highlight update was not patched to Readeck")
 assert(counts.remote_deleted == 1, "remote deletion policy was not applied")
 assert(local_annotations[1].readeck_annotation_id == "created-1", "exported annotation id was not retained")
 
@@ -94,14 +106,18 @@ assert(
     "OAuth client registration did not use the plugin version"
 )
 assert(#state.annotation_posts == 1, "unexpected number of annotation POST requests")
+assert(#state.annotation_patches == 1, "unexpected number of annotation PATCH requests")
 assert(
     state.annotation_posts[1].color == (legacy_annotations and "yellow" or "none"),
     "annotation POST body used the wrong version-compatible color"
 )
+assert(state.annotation_patches[1].color == "green", "annotation PATCH body used the wrong color")
 if legacy_annotations then
     assert(state.annotation_posts[1].note == nil, "legacy annotation POST body should omit note")
+    assert(state.annotation_patches[1].note == nil, "legacy annotation PATCH body should omit note")
 else
     assert(state.annotation_posts[1].note == "local note", "annotation POST body did not include note")
+    assert(state.annotation_patches[1].note == "updated local note", "annotation PATCH body did not include note")
 end
 
 print("KOReader network smoke passed for Readeck " .. expected_version)

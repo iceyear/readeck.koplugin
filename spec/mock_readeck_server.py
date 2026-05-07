@@ -20,6 +20,7 @@ STATE = {
         }
     ],
     "annotation_posts": [],
+    "annotation_patches": [],
     "oauth_clients": [],
     "oauth_token_requests": 0,
 }
@@ -159,6 +160,25 @@ def validate_annotation(payload):
     return None
 
 
+def validate_annotation_update(payload):
+    if payload.get("color") is None or payload.get("color") == "":
+        return form_error("color", "required")
+
+    color = str(payload["color"])
+    if len(color) > 32:
+        return form_error("color", "max length is 32")
+    if color == "none" and not annotation_none_color_supported():
+        return form_error("color", "unsupported before Readeck 0.22.2")
+
+    if "note" in payload:
+        if not annotation_notes_supported():
+            return form_error("note", "unsupported before Readeck 0.22.2")
+        if len(str(payload["note"])) > 1024:
+            return form_error("note", "max length is 1024")
+
+    return None
+
+
 class MockReadeckHandler(BaseHTTPRequestHandler):
     server_version = "MockReadeck/0.1"
 
@@ -243,6 +263,35 @@ class MockReadeckHandler(BaseHTTPRequestHandler):
             STATE["annotations"].append(normalize_annotation(payload))
             write_json(self, normalize_annotation(payload), 201)
             return
+        write_json(self, {"error": "not_found", "path": path}, 404)
+
+    def do_PATCH(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        payload = request_payload(self)
+        annotation_prefix = "/api/bookmarks/%s/annotations/" % ARTICLE_ID
+
+        if path.startswith(annotation_prefix):
+            annotation_id = path[len(annotation_prefix) :]
+            error = validate_annotation_update(payload)
+            if error:
+                write_json(self, error, 422)
+                return
+            for index, item in enumerate(STATE["annotations"]):
+                if item.get("id") == annotation_id:
+                    item = dict(item)
+                    item["color"] = payload["color"]
+                    if "note" in payload:
+                        item["note"] = payload["note"]
+                    STATE["annotations"][index] = normalize_annotation(item)
+                    patched = dict(payload)
+                    patched["id"] = annotation_id
+                    STATE["annotation_patches"].append(patched)
+                    write_json(self, {"annotations": [normalize_annotation(entry) for entry in STATE["annotations"]]})
+                    return
+            write_json(self, {"error": "not_found", "path": path}, 404)
+            return
+
         write_json(self, {"error": "not_found", "path": path}, 404)
 
 

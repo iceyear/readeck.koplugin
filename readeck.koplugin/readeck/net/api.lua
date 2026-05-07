@@ -29,6 +29,9 @@ Api.paths = {
     annotations = function(id)
         return "/api/bookmarks/" .. tostring(id) .. "/annotations"
     end,
+    annotation = function(bookmark_id, annotation_id)
+        return "/api/bookmarks/" .. tostring(bookmark_id) .. "/annotations/" .. tostring(annotation_id)
+    end,
 }
 
 function Api.bookmarks_query(params)
@@ -85,6 +88,10 @@ end
 
 function Api:create_annotation(id, body)
     return self:request("POST", Api.paths.annotations(id), body)
+end
+
+function Api:update_annotation(bookmark_id, annotation_id, body)
+    return self:request("PATCH", Api.paths.annotation(bookmark_id, annotation_id), body)
 end
 
 return Api

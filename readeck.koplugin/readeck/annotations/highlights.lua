@@ -21,6 +21,8 @@ local KOREADER_HIGHLIGHT_COLORS = {
     yellow = "yellow",
 }
 
+local MAX_NOTE_LENGTH = 1024
+
 local UNSAFE_BOUNDARY_ELEMENTS = {
     area = true,
     base = true,
@@ -158,7 +160,198 @@ function Highlights.local_matches_remote_id(local_highlight, remote_highlight)
         and tostring(local_highlight.readeck_annotation_id or "") == tostring(remote_highlight.id)
 end
 
-function Highlights.remote_to_local_annotation(remote_highlight)
+function Highlights.normalize_note(note)
+    note = type(note) == "string" and note or ""
+    if #note > MAX_NOTE_LENGTH then
+        note = note:sub(1, MAX_NOTE_LENGTH)
+    end
+    return note
+end
+
+function Highlights.local_note(local_highlight, profile)
+    if not (profile and profile.notes) then
+        return nil
+    end
+    return Highlights.normalize_note(local_highlight and local_highlight.note)
+end
+
+function Highlights.remote_note(remote_highlight, profile)
+    if not (profile and profile.notes) then
+        return nil
+    end
+    return Highlights.normalize_note(remote_highlight and remote_highlight.note)
+end
+
+function Highlights.local_color(local_highlight, profile)
+    local color = READECK_HIGHLIGHT_COLORS[tostring(local_highlight and local_highlight.color or ""):lower()]
+        or "yellow"
+    if color == "none" and not (profile and profile.none_color) then
+        return "yellow"
+    end
+    return color
+end
+
+function Highlights.remote_color(remote_highlight, profile)
+    local color = READECK_HIGHLIGHT_COLORS[tostring(remote_highlight and remote_highlight.color or ""):lower()]
+        or "yellow"
+    if color == "none" and not (profile and profile.none_color) then
+        return "yellow"
+    end
+    return color
+end
+
+function Highlights.remote_color_to_local(color)
+    return KOREADER_HIGHLIGHT_COLORS[tostring(color or ""):lower()] or "yellow"
+end
+
+function Highlights.apply_sync_snapshot(local_highlight, source, profile)
+    if type(local_highlight) ~= "table" or type(source) ~= "table" then
+        return
+    end
+    if profile and profile.notes then
+        local_highlight.readeck_synced_note = Highlights.remote_note(source, profile) or ""
+    else
+        local_highlight.readeck_synced_note = nil
+    end
+    local_highlight.readeck_synced_color = Highlights.remote_color(source, profile)
+    local_highlight.readeck_synced_at = os.date("%Y-%m-%d %H:%M:%S")
+end
+
+function Highlights.merge_notes(local_note, remote_note)
+    local_note = Highlights.normalize_note(local_note)
+    remote_note = Highlights.normalize_note(remote_note)
+    if local_note == remote_note then
+        return local_note
+    end
+    if local_note == "" then
+        return remote_note
+    end
+    if remote_note == "" then
+        return local_note
+    end
+    return Highlights.normalize_note("KOReader note:\n" .. local_note .. "\n\nReadeck note:\n" .. remote_note)
+end
+
+function Highlights.set_local_note(local_highlight, note)
+    note = Highlights.normalize_note(note)
+    local current = Highlights.normalize_note(local_highlight.note)
+    if current == note then
+        return false
+    end
+    local_highlight.note = note ~= "" and note or nil
+    return true
+end
+
+function Highlights.set_local_color(local_highlight, remote_color)
+    local local_color = Highlights.remote_color_to_local(remote_color)
+    local current = local_highlight.color or "yellow"
+    if current == local_color then
+        return false
+    end
+    local_highlight.color = local_color
+    return true
+end
+
+function Highlights.plan_linked_sync(local_highlight, remote_highlight, profile, policy)
+    profile = profile or {}
+    policy = policy or "merge"
+
+    local local_note = Highlights.local_note(local_highlight, profile)
+    local remote_note = Highlights.remote_note(remote_highlight, profile)
+    local final_note = local_note
+    local note_conflict = false
+
+    if profile.notes then
+        if policy == "remote_wins" then
+            final_note = remote_note
+        elseif policy == "local_wins" then
+            final_note = local_note
+        else
+            local base_note = type(local_highlight.readeck_synced_note) == "string"
+                    and Highlights.normalize_note(local_highlight.readeck_synced_note)
+                or nil
+            if base_note then
+                local local_changed = local_note ~= base_note
+                local remote_changed = remote_note ~= base_note
+                if local_changed and remote_changed and local_note ~= remote_note then
+                    final_note = Highlights.merge_notes(local_note, remote_note)
+                    note_conflict = true
+                elseif remote_changed then
+                    final_note = remote_note
+                else
+                    final_note = local_note
+                end
+            elseif local_note == remote_note then
+                final_note = local_note
+            elseif local_note == "" or remote_note == "" then
+                final_note = local_note ~= "" and local_note or remote_note
+            else
+                final_note = Highlights.merge_notes(local_note, remote_note)
+                note_conflict = true
+            end
+        end
+    end
+
+    local local_color = Highlights.local_color(local_highlight, profile)
+    local remote_color = Highlights.remote_color(remote_highlight, profile)
+    local final_color = local_color
+    local color_conflict = false
+
+    if policy == "remote_wins" then
+        final_color = remote_color
+    elseif policy == "local_wins" then
+        final_color = local_color
+    else
+        local base_color = type(local_highlight.readeck_synced_color) == "string"
+                and Highlights.remote_color({ color = local_highlight.readeck_synced_color }, profile)
+            or nil
+        if base_color then
+            local local_changed = local_color ~= base_color
+            local remote_changed = remote_color ~= base_color
+            if local_changed and remote_changed and local_color ~= remote_color then
+                final_color = local_color
+                color_conflict = true
+            elseif remote_changed then
+                final_color = remote_color
+            else
+                final_color = local_color
+            end
+        elseif local_color ~= remote_color then
+            final_color = local_color
+            color_conflict = true
+        end
+    end
+
+    local local_update = {}
+    if profile.notes and final_note ~= local_note then
+        local_update.note = final_note
+    end
+    if final_color ~= local_color then
+        local_update.color = final_color
+    end
+
+    local remote_update
+    if (profile.notes and final_note ~= remote_note) or final_color ~= remote_color then
+        remote_update = {
+            color = final_color,
+        }
+        if profile.notes then
+            remote_update.note = final_note
+        end
+    end
+
+    return {
+        local_update = next(local_update) ~= nil and local_update or nil,
+        remote_update = remote_update,
+        snapshot = {
+            note = final_note,
+            color = final_color,
+        },
+        conflict = note_conflict or color_conflict,
+    }
+end
+
+function Highlights.remote_to_local_annotation(remote_highlight, profile)
     if type(remote_highlight) ~= "table" then
         return nil, "invalid_annotation"
     end
@@ -196,11 +389,11 @@ function Highlights.remote_to_local_annotation(remote_highlight)
         datetime = nil
     end
 
-    local color = KOREADER_HIGHLIGHT_COLORS[tostring(remote_highlight.color or ""):lower()] or "yellow"
+    local color = Highlights.remote_color_to_local(remote_highlight.color)
     local pos0 = start_selector .. "." .. tostring(start_offset)
     local pos1 = end_selector .. "." .. tostring(end_offset)
 
-    return {
+    local local_annotation = {
         page = pos0,
         pos0 = pos0,
         pos1 = pos1,
@@ -211,6 +404,10 @@ function Highlights.remote_to_local_annotation(remote_highlight)
         note = note,
         readeck_annotation_id = remote_highlight.id,
     }
+    if profile then
+        Highlights.apply_sync_snapshot(local_annotation, remote_highlight, profile)
+    end
+    return local_annotation
 end
 
 function Highlights.build_payload(h, profile)
@@ -258,15 +455,8 @@ function Highlights.build_payload(h, profile)
         end
     end
 
-    local note = type(h.note) == "string" and h.note or ""
-    if #note > 1024 then
-        note = note:sub(1, 1024)
-    end
-
-    local color = READECK_HIGHLIGHT_COLORS[tostring(h.color or ""):lower()] or "yellow"
-    if color == "none" and not profile.none_color then
-        color = "yellow"
-    end
+    local note = Highlights.normalize_note(h.note)
+    local color = Highlights.local_color(h, profile)
 
     local payload = {
         text = h.text,
@@ -281,6 +471,23 @@ function Highlights.build_payload(h, profile)
         payload.note = note
     end
 
+    return payload
+end
+
+function Highlights.build_update_payload(h, profile, values)
+    profile = profile or {}
+    values = values or {}
+    local color = values.color or Highlights.local_color(h, profile)
+    if color == "none" and not profile.none_color then
+        color = "yellow"
+    end
+
+    local payload = {
+        color = color,
+    }
+    if profile.notes then
+        payload.note = Highlights.normalize_note(values.note ~= nil and values.note or h.note)
+    end
     return payload
 end
 

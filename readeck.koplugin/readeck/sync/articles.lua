@@ -1,16 +1,40 @@
 local Api = require("readeck.net.api")
 local InfoMessage = require("ui/widget/infomessage")
+local JSON = require("json")
 local Status = require("readeck.sync.status")
 local UIManager = require("ui/uimanager")
 local util = require("util")
 
 local Articles = {}
 
+local function response_code(response)
+    local code = response and (response.code or response.status)
+    if type(code) == "string" then
+        return tonumber(code) or tonumber(code:match("(%d%d%d)"))
+    end
+    return tonumber(code)
+end
+
+local function response_error(response)
+    if not response then
+        return "no response"
+    end
+    if response.error then
+        local err = response.error
+        if type(err) == "table" then
+            return tostring(err.message or err.code or "network error")
+        end
+        return tostring(err)
+    end
+    return tostring(response_code(response) or "network error")
+end
+
 function Articles.install(Readeck, deps)
     local L = deps.L
     local Log = deps.Log
 
-    function Readeck:getArticleList()
+    function Readeck:getArticleList(options)
+        options = options or {}
         local article_list = {}
         local offset = 0
         local limit = math.min(self.articles_per_sync, 30)
@@ -36,9 +60,11 @@ function Articles.install(Readeck, deps)
                 return nil, err
             elseif err or articles_json == nil then
                 Log:warn("Download at offset", offset, "failed with", err, code)
-                UIManager:show(InfoMessage:new({
-                    text = L("Requesting article list failed."),
-                }))
+                if not options.quiet then
+                    UIManager:show(InfoMessage:new({
+                        text = L("Requesting article list failed."),
+                    }))
+                end
                 return
             end
 
@@ -68,6 +94,128 @@ function Articles.install(Readeck, deps)
         end
 
         return article_list
+    end
+
+    function Readeck:getArticleListHTTPClient()
+        local ok, client = pcall(require, "httpclient")
+        if ok and type(client) == "table" and type(client.new) == "function" then
+            return client
+        end
+        return nil
+    end
+
+    function Readeck:getArticleListAsync(done)
+        local client = self:getArticleListHTTPClient()
+        if not client then
+            Log:info("Using blocking article list fetcher")
+            UIManager:scheduleIn(0, function()
+                local articles, err = self:getArticleList({ quiet = true })
+                done(articles, err)
+            end)
+            return false
+        end
+
+        local state = {
+            article_list = {},
+            offset = 0,
+            limit = math.min(self.articles_per_sync, 30),
+            retry_auth = false,
+        }
+
+        local fetch_next
+        fetch_next = function()
+            if #state.article_list >= self.articles_per_sync then
+                done(state.article_list)
+                return
+            end
+
+            local articles_url = Api.bookmarks_query({
+                limit = state.limit,
+                offset = state.offset,
+                is_archived = 0,
+                type = "article",
+                labels = self.filter_tag,
+                sort = self.sort_param,
+            })
+
+            Log:debug("Fetching article list with async URL:", articles_url)
+            client:new():request({
+                url = self.server_url .. articles_url,
+                method = "GET",
+                on_headers = function(headers)
+                    headers:add("Authorization", "Bearer " .. self.access_token)
+                    headers:add("Accept", "application/json, */*")
+                end,
+            }, function(response)
+                local code = response_code(response)
+                if code == 404 then
+                    Log:debug("Couldn't get offset", state.offset)
+                    done(state.article_list)
+                    return
+                end
+
+                if (code == 401 or code == 403) and not state.retry_auth then
+                    state.retry_auth = true
+                    self.access_token = ""
+                    self.token_expiry = 0
+                    if
+                        self:getBearerToken({
+                            on_oauth_success = function()
+                                self:scheduleSyncAfterOAuth()
+                            end,
+                        })
+                    then
+                        fetch_next()
+                    elseif self:isOAuthPollingActive() then
+                        done(nil, "auth_pending")
+                    else
+                        done(nil, "auth_error")
+                    end
+                    return
+                end
+
+                if not code or code < 200 or code >= 300 then
+                    Log:warn("Async article list failed at offset", state.offset, response_error(response), code or "")
+                    done(nil, "network_error")
+                    return
+                end
+
+                local ok, articles_json = pcall(JSON.decode, response.body or "")
+                if not ok or type(articles_json) ~= "table" then
+                    Log:warn("Async article list response was not valid JSON")
+                    done(nil, "json_error")
+                    return
+                end
+
+                local new_article_list = {}
+                for _, article in ipairs(articles_json) do
+                    table.insert(new_article_list, article)
+                end
+
+                local pending_articles = #new_article_list >= state.limit
+                new_article_list = self:filterIgnoredTags(new_article_list)
+
+                for _, article in ipairs(new_article_list) do
+                    if #state.article_list == self.articles_per_sync then
+                        Log:debug("Hit the article target", self.articles_per_sync)
+                        break
+                    end
+                    table.insert(state.article_list, article)
+                end
+
+                if not pending_articles then
+                    Log:debug("No more articles to query")
+                    done(state.article_list)
+                    return
+                end
+
+                state.offset = state.offset + state.limit
+                fetch_next()
+            end)
+        end
+
+        fetch_next()
+        return true
     end
 
     function Readeck:filterIgnoredTags(article_list)
@@ -122,108 +270,154 @@ function Articles.install(Readeck, deps)
         return by_id
     end
 
+    function Readeck:showSyncStatus(text)
+        local info = InfoMessage:new({ text = text })
+        UIManager:show(info)
+        UIManager:forceRePaint()
+        return info
+    end
+
+    function Readeck:closeSyncStatus(info)
+        if info then
+            UIManager:close(info)
+            UIManager:forceRePaint()
+        end
+    end
+
+    function Readeck:failSyncWithMessage(info, text)
+        self:closeSyncStatus(info)
+        if text then
+            UIManager:show(InfoMessage:new({ text = text }))
+        end
+        self.sync_in_progress = false
+        return false
+    end
+
+    function Readeck:finishSyncWithArticles(articles, highlight_counts)
+        local action_counts = self:processLocalFiles("sync", {
+            remote_articles_by_id = self:indexArticlesByID(articles),
+        })
+        if highlight_counts then
+            action_counts.highlights_imported = highlight_counts.imported or 0
+            action_counts.highlights_exported = highlight_counts.success or 0
+            action_counts.highlights_updated_local = highlight_counts.updated_local or 0
+            action_counts.highlights_updated_remote = highlight_counts.updated_remote or 0
+            action_counts.highlights_conflicts = highlight_counts.conflicts or 0
+            action_counts.highlights_local_only = highlight_counts.remote_deleted or 0
+            action_counts.highlights_skipped = (highlight_counts.skipped or 0)
+                + (highlight_counts.invalid or 0)
+                + (highlight_counts.import_skipped or 0)
+            action_counts.highlights_failed = (highlight_counts.error or 0) + (highlight_counts.import_failed or 0)
+        end
+        articles = self:filterArticlesProcessedEarlierInSync(articles, action_counts.processed_article_ids)
+        Log:debug("Number of articles:", #articles)
+
+        local info = self:showSyncStatus(L("Checking articles…"))
+        UIManager:scheduleIn(0, function()
+            self:closeSyncStatus(info)
+            self.local_progress_updates_in_sync = 0
+            self:downloadArticlesAsync(articles, {
+                action_counts = action_counts,
+                on_finish = function(download_counts, remote_article_ids)
+                    if (self.local_progress_updates_in_sync or 0) > 0 then
+                        action_counts.local_progress_updated = (action_counts.local_progress_updated or 0)
+                            + self.local_progress_updates_in_sync
+                    end
+                    self.local_progress_updates_in_sync = 0
+                    Status.add(action_counts, self:processRemoteDeletes(remote_article_ids))
+
+                    UIManager:show(InfoMessage:new({
+                        text = self:formatSyncMessage(
+                            download_counts.downloaded,
+                            download_counts.skipped,
+                            download_counts.failed,
+                            action_counts
+                        ),
+                    }))
+                    self.sync_in_progress = false
+                    self:refreshCurrentDirIfNeeded()
+                end,
+            })
+        end)
+    end
+
+    function Readeck:syncHighlightsThenContinue(articles)
+        if not self.export_highlights_before_sync then
+            self:finishSyncWithArticles(articles)
+            return
+        end
+
+        local info = self:showSyncStatus(L("Syncing highlights…"))
+        UIManager:scheduleIn(0, function()
+            local highlight_ok, highlight_counts = self:syncHighlightsForLocalFiles({ quiet = true })
+            if highlight_ok == false and not highlight_counts then
+                highlight_counts = { error = 1 }
+            end
+            self:closeSyncStatus(info)
+            self:finishSyncWithArticles(articles, highlight_counts)
+        end)
+    end
+
+    function Readeck:fetchArticlesThenContinue()
+        local info = self:showSyncStatus(L("Getting article list…"))
+        self:getArticleListAsync(function(articles, list_err)
+            self:closeSyncStatus(info)
+            if list_err == "auth_pending" then
+                self.sync_in_progress = false
+                return
+            end
+            if not articles then
+                self:failSyncWithMessage(nil, L("Requesting article list failed."))
+                return
+            end
+            self:syncHighlightsThenContinue(articles)
+        end)
+    end
+
+    function Readeck:processDownloadQueueThenContinue()
+        if self.download_queue and next(self.download_queue) ~= nil then
+            local info = self:showSyncStatus(L("Adding articles from queue…"))
+            UIManager:scheduleIn(0, function()
+                for _, articleUrl in ipairs(self.download_queue) do
+                    self:addArticle(articleUrl)
+                end
+                self.download_queue = {}
+                self:saveSettings()
+                self:closeSyncStatus(info)
+                self:fetchArticlesThenContinue()
+            end)
+            return
+        end
+
+        self:fetchArticlesThenContinue()
+    end
+
     function Readeck:synchronize()
         if self.sync_in_progress then
             Log:info("Sync requested while another sync is already running")
             return false
         end
         self.sync_in_progress = true
-        local info = InfoMessage:new({ text = L("Connecting…") })
-        UIManager:show(info)
-        UIManager:forceRePaint()
-        UIManager:close(info)
-
-        if
-            self:getBearerToken({
-                on_oauth_success = function()
-                    self:scheduleSyncAfterOAuth()
-                end,
-            }) == false
-        then
-            self.sync_in_progress = false
-            return false
-        end
-        if self.download_queue and next(self.download_queue) ~= nil then
-            info = InfoMessage:new({ text = L("Adding articles from queue…") })
-            UIManager:show(info)
-            UIManager:forceRePaint()
-            for _, articleUrl in ipairs(self.download_queue) do
-                self:addArticle(articleUrl)
-            end
-            self.download_queue = {}
-            self:saveSettings()
-            UIManager:close(info)
-        end
-
-        info = InfoMessage:new({ text = L("Getting article list…") })
-        UIManager:show(info)
-        UIManager:forceRePaint()
-        UIManager:close(info)
-
-        if self.access_token ~= "" then
-            local articles, list_err = self:getArticleList()
-            if list_err == "auth_pending" then
-                self.sync_in_progress = false
-                return false
-            end
-            if articles then
-                local highlight_counts
-                if self.export_highlights_before_sync then
-                    local highlight_ok
-                    highlight_ok, highlight_counts = self:syncHighlightsForLocalFiles({ quiet = true })
-                    if highlight_ok == false and not highlight_counts then
-                        highlight_counts = { error = 1 }
-                    end
-                end
-
-                local action_counts = self:processLocalFiles("sync", {
-                    remote_articles_by_id = self:indexArticlesByID(articles),
-                })
-                if highlight_counts then
-                    action_counts.highlights_imported = highlight_counts.imported or 0
-                    action_counts.highlights_exported = highlight_counts.success or 0
-                    action_counts.highlights_local_only = highlight_counts.remote_deleted or 0
-                    action_counts.highlights_skipped = (highlight_counts.skipped or 0)
-                        + (highlight_counts.invalid or 0)
-                        + (highlight_counts.import_skipped or 0)
-                    action_counts.highlights_failed = (highlight_counts.error or 0)
-                        + (highlight_counts.import_failed or 0)
-                end
-                articles = self:filterArticlesProcessedEarlierInSync(articles, action_counts.processed_article_ids)
-                Log:debug("Number of articles:", #articles)
-
-                info = InfoMessage:new({ text = L("Checking articles…") })
-                UIManager:show(info)
-                UIManager:forceRePaint()
-                UIManager:close(info)
-
-                self.local_progress_updates_in_sync = 0
-                self:downloadArticlesAsync(articles, {
-                    action_counts = action_counts,
-                    on_finish = function(download_counts, remote_article_ids)
-                        if (self.local_progress_updates_in_sync or 0) > 0 then
-                            action_counts.local_progress_updated = (action_counts.local_progress_updated or 0)
-                                + self.local_progress_updates_in_sync
-                        end
-                        self.local_progress_updates_in_sync = 0
-                        Status.add(action_counts, self:processRemoteDeletes(remote_article_ids))
-
-                        UIManager:show(InfoMessage:new({
-                            text = self:formatSyncMessage(
-                                download_counts.downloaded,
-                                download_counts.skipped,
-                                download_counts.failed,
-                                action_counts
-                            ),
-                        }))
-                        self.sync_in_progress = false
-                        self:refreshCurrentDirIfNeeded()
+        local info = self:showSyncStatus(L("Connecting…"))
+        UIManager:scheduleIn(0, function()
+            if
+                self:getBearerToken({
+                    on_oauth_success = function()
+                        self:scheduleSyncAfterOAuth()
                     end,
-                })
-                return true
+                }) == false
+            then
+                self:failSyncWithMessage(info)
+                return
             end
-        end
-        self.sync_in_progress = false
+            self:closeSyncStatus(info)
+            if self.access_token ~= "" then
+                self:processDownloadQueueThenContinue()
+            else
+                self.sync_in_progress = false
+            end
+        end)
+        return true
     end
 end
 

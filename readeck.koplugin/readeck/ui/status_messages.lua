@@ -46,6 +46,15 @@ function StatusMessages.install(Readeck, deps)
         if (counts.highlights_exported or 0) > 0 then
             table.insert(parts, T(L("Highlights exported: %1"), counts.highlights_exported))
         end
+        if (counts.highlights_updated_local or 0) > 0 then
+            table.insert(parts, T(L("Highlights updated in KOReader: %1"), counts.highlights_updated_local))
+        end
+        if (counts.highlights_updated_remote or 0) > 0 then
+            table.insert(parts, T(L("Highlights updated in Readeck: %1"), counts.highlights_updated_remote))
+        end
+        if (counts.highlights_conflicts or 0) > 0 then
+            table.insert(parts, T(L("Highlight conflicts merged: %1"), counts.highlights_conflicts))
+        end
         if (counts.highlights_local_only or 0) > 0 then
             table.insert(parts, T(L("Highlights kept local only: %1"), counts.highlights_local_only))
         end

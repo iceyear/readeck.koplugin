@@ -108,6 +108,69 @@ function SettingsMenu.install(Readeck, deps)
         }))
     end
 
+    function Readeck:getHighlightFeaturePolicyLabel()
+        local policy = self.highlight_feature_policy or "auto"
+        if policy == "modern" then
+            return L("Modern Readeck (0.22.2+)")
+        end
+        if policy == "legacy" then
+            return L("Legacy Readeck (before 0.22.2)")
+        end
+        return L("Auto-detect from server")
+    end
+
+    function Readeck:setHighlightFeaturePolicy(touchmenu_instance)
+        local options = {
+            {
+                "auto",
+                L("Auto-detect from server"),
+                L("Fetch /api/info and use the Readeck server version/features."),
+            },
+            {
+                "modern",
+                L("Modern Readeck (0.22.2+)"),
+                L("Always sync highlight notes and transparent color."),
+            },
+            {
+                "legacy",
+                L("Legacy Readeck (before 0.22.2)"),
+                L("Do not send highlight notes or transparent color."),
+            },
+        }
+        local radio_buttons = {}
+        for _, option in ipairs(options) do
+            table.insert(radio_buttons, {
+                {
+                    text = option[2],
+                    provider = option[1],
+                    checked = (self.highlight_feature_policy or "auto") == option[1],
+                    info_text = option[3],
+                },
+            })
+        end
+
+        UIManager:show(RadioButtonWidget:new({
+            title_text = L("Readeck server features"),
+            cancel_text = L("Cancel"),
+            ok_text = L("Apply"),
+            radio_buttons = radio_buttons,
+            callback = function(radio)
+                if radio then
+                    self.highlight_feature_policy = radio.provider
+                    if self.highlight_feature_policy == "auto" then
+                        NetworkMgr:runWhenOnline(function()
+                            self:refreshServerInfo(true)
+                        end)
+                    end
+                    self:saveSettings()
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
+                end
+            end,
+        }))
+    end
+
     function Readeck:getHighlightSyncPolicyLabel()
         if self.highlight_sync_policy == "respect_remote_deletions" then
             return L("Respect remote deletions")
@@ -148,6 +211,66 @@ function SettingsMenu.install(Readeck, deps)
             callback = function(radio)
                 if radio then
                     self.highlight_sync_policy = radio.provider
+                    self:saveSettings()
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
+                end
+            end,
+        }))
+    end
+
+    function Readeck:getHighlightConflictPolicyLabel()
+        local policy = self.highlight_conflict_policy or "merge"
+        if policy == "remote_wins" then
+            return L("Readeck overwrites KOReader")
+        end
+        if policy == "local_wins" then
+            return L("KOReader overwrites Readeck")
+        end
+        return L("Merge local and remote changes")
+    end
+
+    function Readeck:setHighlightConflictPolicy(touchmenu_instance)
+        local options = {
+            {
+                "merge",
+                L("Merge local and remote changes"),
+                L(
+                    "Use the last synced state to merge note/color edits and preserve both notes when both sides changed."
+                ),
+            },
+            {
+                "remote_wins",
+                L("Readeck overwrites KOReader"),
+                L("Remote note and color changes replace the linked KOReader highlight."),
+            },
+            {
+                "local_wins",
+                L("KOReader overwrites Readeck"),
+                L("Local note and color changes replace the linked Readeck annotation."),
+            },
+        }
+        local radio_buttons = {}
+        for _, option in ipairs(options) do
+            table.insert(radio_buttons, {
+                {
+                    text = option[2],
+                    provider = option[1],
+                    checked = (self.highlight_conflict_policy or "merge") == option[1],
+                    info_text = option[3],
+                },
+            })
+        end
+
+        UIManager:show(RadioButtonWidget:new({
+            title_text = L("Highlight update strategy"),
+            cancel_text = L("Cancel"),
+            ok_text = L("Apply"),
+            radio_buttons = radio_buttons,
+            callback = function(radio)
+                if radio then
+                    self.highlight_conflict_policy = radio.provider
                     self:saveSettings()
                     if touchmenu_instance then
                         touchmenu_instance:updateItems()
@@ -214,6 +337,15 @@ More details: https://readeck.org]]),
                 keep_menu_open = true,
                 callback = function()
                     self:editServerSettings()
+                end,
+            },
+            {
+                text_func = function()
+                    return T(L("Readeck server features: %1"), Readeck.getHighlightFeaturePolicyLabel(self))
+                end,
+                keep_menu_open = true,
+                callback = function(touchmenu_instance)
+                    Readeck.setHighlightFeaturePolicy(self, touchmenu_instance)
                 end,
             },
             {
@@ -416,7 +548,16 @@ More details: https://readeck.org]]),
                     },
                     {
                         text_func = function()
-                            return T(L("Highlight sync conflict policy: %1"), Readeck.getHighlightSyncPolicyLabel(self))
+                            return T(L("Highlight update strategy: %1"), Readeck.getHighlightConflictPolicyLabel(self))
+                        end,
+                        keep_menu_open = true,
+                        callback = function(touchmenu_instance)
+                            Readeck.setHighlightConflictPolicy(self, touchmenu_instance)
+                        end,
+                    },
+                    {
+                        text_func = function()
+                            return T(L("Remote-deleted highlights: %1"), Readeck.getHighlightSyncPolicyLabel(self))
                         end,
                         keep_menu_open = true,
                         callback = function(touchmenu_instance)

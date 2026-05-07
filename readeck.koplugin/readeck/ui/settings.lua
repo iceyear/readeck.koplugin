@@ -3,6 +3,7 @@ local DataStorage = require("datastorage")
 local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
+local NetworkMgr = require("ui/network/manager")
 local UIManager = require("ui/uimanager")
 
 local SettingsUI = {}
@@ -117,6 +118,11 @@ Restart KOReader after editing the config file.]]),
                             self.server_url = myfields[1]:gsub("/*$", "")
                             self.server_info = nil
                             self:saveSettings()
+                            if (self.highlight_feature_policy or "auto") == "auto" then
+                                NetworkMgr:runWhenOnline(function()
+                                    self:refreshServerInfo(true)
+                                end)
+                            end
                             UIManager:close(self.settings_dialog)
                         end,
                     },

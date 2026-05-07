@@ -666,6 +666,239 @@ describe("KOReader smoke", function()
         assert.are.equal("created-remote-id", saved_annotations[1].readeck_annotation_id)
     end)
 
+    it("updates linked KOReader highlights when Readeck note or color changed", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local article_path = "/tmp/readeck/Article [rd-id_abc123].epub"
+        local local_annotations = {
+            {
+                readeck_annotation_id = "remote-1",
+                drawer = "lighten",
+                text = "local text",
+                note = "old note",
+                color = "yellow",
+                readeck_synced_note = "old note",
+                readeck_synced_color = "yellow",
+                pos0 = "section/p[2].4",
+                pos1 = "section/p[2].15",
+            },
+        }
+        local saved_annotations
+        local patch_count = 0
+
+        package.loaded["docsettings"] = nil
+        package.preload["docsettings"] = function()
+            return {
+                hasSidecarFile = function()
+                    return true
+                end,
+                open = function()
+                    return {
+                        readSetting = function()
+                            return local_annotations
+                        end,
+                        saveSetting = function(_, key, value)
+                            if key == "annotations" then
+                                saved_annotations = value
+                            end
+                        end,
+                        flush = function() end,
+                    }
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local instance = setmetatable({
+            access_token = "token",
+            highlight_feature_policy = "modern",
+            getBearerToken = function()
+                return true
+            end,
+            getArticleID = function()
+                return "abc123"
+            end,
+            callAPI = function(_, method, path)
+                if method == "GET" and path == "/api/bookmarks/abc123/annotations" then
+                    return {
+                        {
+                            id = "remote-1",
+                            text = "local text",
+                            note = "remote note",
+                            color = "blue",
+                            start_selector = "section/p[2]",
+                            start_offset = 4,
+                            end_selector = "section/p[2]",
+                            end_offset = 15,
+                        },
+                    }
+                end
+                if method == "PATCH" then
+                    patch_count = patch_count + 1
+                end
+                return true
+            end,
+        }, { __index = Readeck })
+
+        local ok, counts = instance:syncHighlightsForPath(article_path, { quiet = true })
+
+        assert.is_true(ok)
+        assert.are.equal(1, counts.updated_local)
+        assert.are.equal(0, counts.updated_remote)
+        assert.are.equal(0, patch_count)
+        assert.are.equal("remote note", local_annotations[1].note)
+        assert.are.equal("blue", local_annotations[1].color)
+        assert.are.equal("remote note", saved_annotations[1].readeck_synced_note)
+        assert.are.equal("blue", saved_annotations[1].readeck_synced_color)
+    end)
+
+    it("patches linked Readeck annotations when KOReader note or color changed", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local encoded_body
+
+        package.loaded["json"] = nil
+        package.preload["json"] = function()
+            return {
+                encode = function(body)
+                    encoded_body = body
+                    return "{}"
+                end,
+                decode = function()
+                    return {}
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local patch_path
+        local local_annotations = {
+            {
+                readeck_annotation_id = "remote-1",
+                drawer = "lighten",
+                text = "local text",
+                note = "local note",
+                color = "green",
+                readeck_synced_note = "old note",
+                readeck_synced_color = "yellow",
+                pos0 = "section/p[2].4",
+                pos1 = "section/p[2].15",
+            },
+        }
+        local instance = setmetatable({
+            access_token = "token",
+            highlight_feature_policy = "modern",
+            getBearerToken = function()
+                return true
+            end,
+            callAPI = function(_, method, path)
+                if method == "GET" and path == "/api/bookmarks/abc123/annotations" then
+                    return {
+                        {
+                            id = "remote-1",
+                            text = "local text",
+                            note = "old note",
+                            color = "yellow",
+                            start_selector = "section/p[2]",
+                            start_offset = 4,
+                            end_selector = "section/p[2]",
+                            end_offset = 15,
+                        },
+                    }
+                end
+                if method == "PATCH" then
+                    patch_path = path
+                    return {
+                        annotations = {
+                            {
+                                id = "remote-1",
+                                text = "local text",
+                                note = encoded_body.note,
+                                color = encoded_body.color,
+                                start_selector = "section/p[2]",
+                                start_offset = 4,
+                                end_selector = "section/p[2]",
+                                end_offset = 15,
+                            },
+                        },
+                    }
+                end
+                return true
+            end,
+        }, { __index = Readeck })
+
+        local ok, counts = instance:syncHighlightsForArticle("abc123", nil, local_annotations, { quiet = true })
+
+        assert.is_true(ok)
+        assert.are.equal(1, counts.updated_remote)
+        assert.are.equal("/api/bookmarks/abc123/annotations/remote-1", patch_path)
+        assert.are.equal("local note", encoded_body.note)
+        assert.are.equal("green", encoded_body.color)
+        assert.are.equal("local note", local_annotations[1].readeck_synced_note)
+        assert.are.equal("green", local_annotations[1].readeck_synced_color)
+    end)
+
+    it("refreshes server info during automatic highlight feature detection", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local encoded_body
+
+        package.loaded["json"] = nil
+        package.preload["json"] = function()
+            return {
+                encode = function(body)
+                    encoded_body = body
+                    return "{}"
+                end,
+                decode = function()
+                    return {}
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local refresh_count = 0
+        local instance = setmetatable({
+            access_token = "token",
+            server_info = { version = { canonical = "0.22.1" } },
+            highlight_feature_policy = "auto",
+            getBearerToken = function()
+                return true
+            end,
+            refreshServerInfo = function(self)
+                refresh_count = refresh_count + 1
+                self.server_info = { version = { canonical = "0.22.3" } }
+                return self.server_info
+            end,
+            callAPI = function(_, method, path)
+                if method == "GET" and path == "/api/bookmarks/abc123/annotations" then
+                    return {}
+                end
+                if method == "POST" and path == "/api/bookmarks/abc123/annotations" then
+                    return { id = "created-remote-id", note = encoded_body.note, color = encoded_body.color }
+                end
+                return true
+            end,
+        }, { __index = Readeck })
+
+        local ok, counts = instance:syncHighlightsForArticle("abc123", nil, {
+            {
+                drawer = "lighten",
+                text = "local text",
+                note = "local note",
+                color = "none",
+                pos0 = "section/p[2].4",
+                pos1 = "section/p[2].15",
+            },
+        }, { quiet = true })
+
+        assert.is_true(ok)
+        assert.are.equal(1, counts.success)
+        assert.are.equal(1, refresh_count)
+        assert.are.equal("local note", encoded_body.note)
+        assert.are.equal("none", encoded_body.color)
+    end)
+
     it("falls back to the blocking downloader when KOReader async HTTP fails", function()
         package.path = "./readeck.koplugin/?.lua;" .. package.path
         install_koreader_stubs()
@@ -1382,6 +1615,9 @@ describe("KOReader smoke", function()
         local message = instance:formatSyncMessage(0, 1, 0, {
             highlights_imported = 3,
             highlights_exported = 2,
+            highlights_updated_local = 5,
+            highlights_updated_remote = 6,
+            highlights_conflicts = 7,
             highlights_local_only = 4,
             highlights_skipped = 1,
             highlights_failed = 1,
@@ -1389,6 +1625,9 @@ describe("KOReader smoke", function()
 
         assert.is_true(message:find("Highlights imported: 3", 1, true) ~= nil)
         assert.is_true(message:find("Highlights exported: 2", 1, true) ~= nil)
+        assert.is_true(message:find("Highlights updated in KOReader: 5", 1, true) ~= nil)
+        assert.is_true(message:find("Highlights updated in Readeck: 6", 1, true) ~= nil)
+        assert.is_true(message:find("Highlight conflicts merged: 7", 1, true) ~= nil)
         assert.is_true(message:find("Highlights kept local only: 4", 1, true) ~= nil)
         assert.is_true(message:find("Highlights skipped: 1", 1, true) ~= nil)
         assert.is_true(message:find("Highlight sync failed: 1", 1, true) ~= nil)

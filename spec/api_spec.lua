@@ -27,6 +27,9 @@ describe("readeck.net.api", function()
             if request.path == Api.paths.annotations("abc") and request.method == "POST" then
                 return { id = "annotation-id", note = request.body.note }
             end
+            if request.path == Api.paths.annotation("abc", "annotation-id") and request.method == "PATCH" then
+                return { annotations = { { id = "annotation-id", note = request.body.note } } }
+            end
             if request.path == Api.paths.bookmark_article("abc") then
                 return "EPUB"
             end
@@ -35,10 +38,12 @@ describe("readeck.net.api", function()
 
         local info = client:get_info()
         local annotation = client:create_annotation("abc", { note = "reader note" })
+        local updated = client:update_annotation("abc", "annotation-id", { note = "updated note" })
         local epub = client:download_article("abc")
 
         assert.are.equal("0.22.2", info.version.canonical)
         assert.are.equal("reader note", annotation.note)
+        assert.are.equal("updated note", updated.annotations[1].note)
         assert.are.equal("EPUB", epub)
         assert.are.same({
             { method = "GET", path = "/api/info", headers = {} },
@@ -46,6 +51,12 @@ describe("readeck.net.api", function()
                 method = "POST",
                 path = "/api/bookmarks/abc/annotations",
                 body = { note = "reader note" },
+                headers = {},
+            },
+            {
+                method = "PATCH",
+                path = "/api/bookmarks/abc/annotations/annotation-id",
+                body = { note = "updated note" },
                 headers = {},
             },
             { method = "GET", path = "/api/bookmarks/abc/article.epub", headers = {} },

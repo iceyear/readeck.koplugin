@@ -158,4 +158,95 @@ describe("readeck.annotations.highlights", function()
             readeck_annotation_id = "remote-id",
         }, annotation)
     end)
+
+    it("stores sync snapshots when importing Readeck annotations", function()
+        local annotation = Highlights.remote_to_local_annotation({
+            id = "remote-id",
+            text = "remote text",
+            note = "remote note",
+            color = "green",
+            start_selector = "section/p[2]",
+            start_offset = 4,
+            end_selector = "section/p[2]",
+            end_offset = 15,
+        }, { notes = true, none_color = true })
+
+        assert.are.equal("remote note", annotation.readeck_synced_note)
+        assert.are.equal("green", annotation.readeck_synced_color)
+        assert.is.truthy(annotation.readeck_synced_at)
+    end)
+
+    it("plans remote-only linked note and color updates for local annotations", function()
+        local plan = Highlights.plan_linked_sync({
+            note = "old note",
+            color = "yellow",
+            readeck_synced_note = "old note",
+            readeck_synced_color = "yellow",
+        }, {
+            note = "remote note",
+            color = "blue",
+        }, { notes = true, none_color = true }, "merge")
+
+        assert.are.same({ note = "remote note", color = "blue" }, plan.local_update)
+        assert.is_nil(plan.remote_update)
+        assert.is_false(plan.conflict)
+    end)
+
+    it("plans local-only linked note and color updates for Readeck", function()
+        local plan = Highlights.plan_linked_sync({
+            note = "local note",
+            color = "green",
+            readeck_synced_note = "old note",
+            readeck_synced_color = "yellow",
+        }, {
+            note = "old note",
+            color = "yellow",
+        }, { notes = true, none_color = true }, "merge")
+
+        assert.is_nil(plan.local_update)
+        assert.are.same({ note = "local note", color = "green" }, plan.remote_update)
+        assert.is_false(plan.conflict)
+    end)
+
+    it("merges note conflicts and lets local color win by default", function()
+        local plan = Highlights.plan_linked_sync({
+            note = "local note",
+            color = "green",
+            readeck_synced_note = "old note",
+            readeck_synced_color = "yellow",
+        }, {
+            note = "remote note",
+            color = "blue",
+        }, { notes = true, none_color = true }, "merge")
+
+        assert.is.truthy(plan.remote_update.note:find("KOReader note", 1, true))
+        assert.is.truthy(plan.remote_update.note:find("Readeck note", 1, true))
+        assert.are.equal("green", plan.remote_update.color)
+        assert.are.same({ note = plan.remote_update.note }, plan.local_update)
+        assert.is_true(plan.conflict)
+    end)
+
+    it("can force Readeck or KOReader to win linked highlight updates", function()
+        local remote_wins = Highlights.plan_linked_sync({
+            note = "local note",
+            color = "green",
+        }, {
+            note = "remote note",
+            color = "blue",
+        }, { notes = true, none_color = true }, "remote_wins")
+
+        assert.are.same({ note = "remote note", color = "blue" }, remote_wins.local_update)
+        assert.is_nil(remote_wins.remote_update)
+
+        local local_wins = Highlights.plan_linked_sync({
+            note = "local note",
+            color = "green",
+        }, {
+            note = "remote note",
+            color = "blue",
+        }, { notes = true, none_color = true }, "local_wins")
+
+        assert.is_nil(local_wins.local_update)
+        assert.are.same({ note = "local note", color = "green" }, local_wins.remote_update)
+    end)
 end)

@@ -112,9 +112,11 @@ If you are offline:
 
 1. Open a downloaded Readeck article in KOReader
 2. Go to **Main Menu > Readeck > Sync current article highlights**
-3. Readeck annotations are imported into KOReader highlights, and local KOReader highlights with supported notes/colors are uploaded to Readeck as annotations. Duplicates are skipped if they overlap.
+3. Readeck annotations are imported into KOReader highlights, local KOReader highlights with supported notes/colors are uploaded to Readeck, and already linked annotations are incrementally updated both ways.
 
-By default, highlight sync preserves local highlights. If a highlight was deleted in Readeck but still exists in KOReader, it may be restored to Readeck on the next sync. Set **Highlight sync conflict policy** to **Respect remote deletions** if you prefer remote deletions to stop those linked local highlights from being re-uploaded; the local KOReader copy is kept.
+For linked highlights, **Highlight update strategy** defaults to merging local and remote note/color changes using the last synced state. You can also force **Readeck overwrites KOReader** or **KOReader overwrites Readeck**.
+
+By default, remote-deleted highlights are preserved locally and may be restored to Readeck on the next sync. Set **Remote-deleted highlights** to **Respect remote deletions** if you prefer deleted Readeck annotations to stay local-only and not be re-uploaded.
 
 ### Syncing Reading Progress
 
@@ -150,7 +152,9 @@ During sync, the plugin can send KOReader's local reading progress below 100% ba
 * **Concurrent downloads**: Choose how many article downloads run at once. Use `1` for the safest behavior on very slow devices, or `2-3` when the device and server can handle it.
 * **Periodic sync (beta)**: Enable a KOReader timer and choose the interval in minutes
 * **Language**: Follow KOReader's language, or force the plugin UI to English / Simplified Chinese
-* **Highlight sync conflict policy**: Choose whether deleted Readeck annotations should be restored from KOReader or kept local-only
+* **Readeck server features**: Auto-detect `/api/info`, force modern Readeck 0.22.2+ annotation fields, or force legacy compatibility
+* **Highlight update strategy**: Merge linked note/color edits, or force Readeck/KOReader to overwrite the other side
+* **Remote-deleted highlights**: Choose whether deleted Readeck annotations should be restored from KOReader or kept local-only
 
 ### Star / Like Sync
 
