@@ -5,8 +5,36 @@ local Log = {
     INFO = 2,
     WARN = 3,
     ERROR = 4,
-    level = 1,
+    level = 2,
 }
+
+local level_values = {
+    debug = Log.DEBUG,
+    info = Log.INFO,
+    warn = Log.WARN,
+    error = Log.ERROR,
+}
+
+local level_names = {
+    [Log.DEBUG] = "debug",
+    [Log.INFO] = "info",
+    [Log.WARN] = "warn",
+    [Log.ERROR] = "error",
+}
+
+function Log:normalizeLevel(level)
+    if type(level) == "number" then
+        return level_names[level] or "info"
+    end
+    level = tostring(level or ""):lower()
+    return level_values[level] and level or "info"
+end
+
+function Log:setLevel(level)
+    local normalized = self:normalizeLevel(level)
+    self.level = level_values[normalized]
+    return normalized
+end
 
 function Log:debug(...)
     if self.level <= self.DEBUG then

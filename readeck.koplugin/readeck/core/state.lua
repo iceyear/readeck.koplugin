@@ -57,6 +57,7 @@ function State.install(Readeck, deps)
     function Readeck:loadSettingsIntoState(settings)
         self.language_override = settings.language_override or ""
         I18n.set_language_override(self.language_override)
+        self.log_level = Log:setLevel(settings.log_level or self.log_level)
         self.sort_options = self:buildSortOptions()
 
         self.completion_action_sync_policy_version = settings.completion_action_sync_policy_version or 0
@@ -77,6 +78,7 @@ function State.install(Readeck, deps)
             return self:clampDownloadConcurrency(value)
         end)
         assign_if_set(self, settings, "experimental_async_downloads")
+        assign_if_set(self, settings, "experimental_async_downloads_opt_in_version")
         assign_if_set(self, settings, "auto_export_highlights")
         assign_if_set(self, settings, "export_highlights_before_sync")
         assign_if_set(self, settings, "highlight_conflict_policy")
@@ -98,25 +100,46 @@ function State.install(Readeck, deps)
     end
 
     function Readeck:migrateSettingsIfNeeded(settings)
-        if self.completion_action_sync_policy_version >= Defaults.COMPLETION_ACTION_SYNC_POLICY_VERSION then
-            return false
+        local migrated = false
+
+        if self.completion_action_sync_policy_version < Defaults.COMPLETION_ACTION_SYNC_POLICY_VERSION then
+            if
+                self.process_completion_on_sync == false
+                and self.archive_instead_of_delete ~= false
+                and self.completion_action_finished_enabled
+            then
+                self.process_completion_on_sync = true
+                Log:info("Enabled completion actions during sync for archived completion workflow")
+            end
+            self.completion_action_sync_policy_version = Defaults.COMPLETION_ACTION_SYNC_POLICY_VERSION
+            settings.completion_action_sync_policy_version = Defaults.COMPLETION_ACTION_SYNC_POLICY_VERSION
+            migrated = true
         end
+
         if
-            self.process_completion_on_sync == false
-            and self.archive_instead_of_delete ~= false
-            and self.completion_action_finished_enabled
+            self.experimental_async_downloads == true
+            and settings.experimental_async_downloads_opt_in_version
+                ~= Defaults.EXPERIMENTAL_ASYNC_DOWNLOADS_OPT_IN_VERSION
         then
-            self.process_completion_on_sync = true
-            Log:info("Enabled completion actions during sync for archived completion workflow")
+            self.experimental_async_downloads = false
+            settings.experimental_async_downloads = false
+            Log:info("Disabled legacy experimental subprocess downloads; explicit opt-in is required")
+            migrated = true
         end
-        self.completion_action_sync_policy_version = Defaults.COMPLETION_ACTION_SYNC_POLICY_VERSION
-        settings.completion_action_sync_policy_version = Defaults.COMPLETION_ACTION_SYNC_POLICY_VERSION
-        return true
+
+        if self.experimental_async_downloads_opt_in_version ~= Defaults.EXPERIMENTAL_ASYNC_DOWNLOADS_OPT_IN_VERSION then
+            self.experimental_async_downloads_opt_in_version = Defaults.EXPERIMENTAL_ASYNC_DOWNLOADS_OPT_IN_VERSION
+            settings.experimental_async_downloads_opt_in_version = Defaults.EXPERIMENTAL_ASYNC_DOWNLOADS_OPT_IN_VERSION
+            migrated = true
+        end
+
+        return migrated
     end
 
     function Readeck:resetSettingsToDefaults()
         self:cancelOAuthPolling()
         Defaults.apply(self)
+        self.log_level = Log:setLevel(self.log_level)
         self.async_http_client = nil
         self.dateparser = nil
         self.directory = nil
@@ -135,8 +158,9 @@ function State.install(Readeck, deps)
     end
 
     function Readeck:init()
-        Log:info("Initializing Readeck plugin")
         Defaults.apply(self)
+        self.log_level = Log:setLevel(self.log_level)
+        Log:info("Initializing Readeck plugin")
         self.sort_options = self:buildSortOptions()
 
         self:onDispatcherRegisterActions()

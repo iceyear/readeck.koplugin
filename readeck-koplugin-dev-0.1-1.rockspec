@@ -9,7 +9,7 @@ description = {
     summary = "Development dependencies for the KOReader Readeck plugin",
     detailed = "Installs Lua tools used by the plugin test and lint workflow.",
     homepage = "https://github.com/iceyear/readeck.koplugin",
-    license = "GPL-3.0",
+    license = "MIT",
 }
 
 dependencies = {

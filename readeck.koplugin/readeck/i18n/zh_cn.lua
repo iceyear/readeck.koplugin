@@ -2,6 +2,8 @@ local zh = {
     ["Synchronises articles with a Readeck server."] = "与 Readeck 服务器同步文章。",
     ["Readeck sync"] = "Readeck 同步",
     ["Synchronize articles with server"] = "与服务器同步文章",
+    ["Show sync progress"] = "显示同步进度",
+    ["No sync progress to show."] = "没有可显示的同步进度。",
     ["Sync current article highlights"] = "同步当前文章高亮",
     ["Process finished/read articles"] = "处理已完成/已读文章",
     ["Articles processed."] = "文章处理完成。",
@@ -10,11 +12,22 @@ local zh = {
     ["Go to download folder: %1"] = "前往下载文件夹：%1",
     ["Configure Readeck server"] = "配置 Readeck 服务器",
     ["Configure Readeck client"] = "配置 Readeck 客户端",
+    ["Download limits"] = "下载限制",
+    ["Network timeouts"] = "网络超时",
+    ["Article selection"] = "文章选择",
+    ["Article actions"] = "文章动作",
+    ["Ratings and review tags"] = "评分和评论标签",
     ["Language"] = "语言",
     ["Language: %1"] = "语言：%1",
     ["Follow KOReader language"] = "跟随 KOReader 语言",
     ["English"] = "英文",
     ["Simplified Chinese"] = "简体中文",
+    ["Log level"] = "日志等级",
+    ["Log level: %1"] = "日志等级：%1",
+    ["Debug"] = "调试",
+    ["Info"] = "信息",
+    ["Warnings"] = "警告",
+    ["Errors"] = "错误",
     ["Article completion actions"] = "文章完成动作",
     ["Process finished articles in Readeck"] = "处理 Readeck 中已完成文章",
     ["Process 100% read articles in Readeck"] = "处理 Readeck 中已读 100% 的文章",
@@ -173,6 +186,8 @@ Downloads to folder: %1]] ] = [[Readeck 是一个开源稍后读服务。此插�
     ["Number of articles to download per sync"] = "每次同步下载的文章数量",
     ["Concurrent downloads"] = "并发下载",
     ["Number of article downloads to run at the same time (1-3)"] = "同时运行的文章下载数量（1-3）",
+    ["Experimental subprocess downloads"] = "实验性子进程下载",
+    ["Try parallel downloads without KOReader's async HTTP looper. If a subprocess download fails, the plugin falls back to the blocking downloader."] = "在没有 KOReader async HTTP looper 时尝试并行下载。如果子进程下载失败，插件会回退到阻塞式下载。",
     ["Downloading articles… %1/%2"] = "正在下载文章… %1/%2",
     ["Not set"] = "未设置",
     ["All articles"] = "全部文章",
@@ -219,11 +234,15 @@ Downloads to folder: %1]] ] = [[Readeck 是一个开源稍后读服务。此插�
     ["About"] = "关于",
     [ [[Readeck for KOReader
 Version: %1
+License: MIT
+Source: https://github.com/iceyear/readeck.koplugin
 
 Synchronises articles with a Readeck server.
 
 More details: https://readeck.org]] ] = [[Readeck for KOReader
 版本：%1
+许可证：MIT
+源码：https://github.com/iceyear/readeck.koplugin
 
 与 Readeck 服务器同步文章。
 

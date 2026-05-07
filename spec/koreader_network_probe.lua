@@ -13,7 +13,9 @@ dofile("spec/front/unit/commonrequire.lua")
 local Defaults = require("readeck.core.defaults")
 local PluginMetadata = dofile(plugin_dir .. "/_meta.lua")
 local Readeck = dofile(plugin_dir .. "/main.lua")
+local FFIUtil = require("ffi/util")
 local lfs = require("libs/libkoreader-lfs")
+local socket = require("socket")
 
 local version_path = expected_version:gsub("%W", "-")
 local download_dir = "/tmp/readeck-network-probe-" .. version_path .. "-" .. tostring(os.time())
@@ -28,6 +30,7 @@ instance.block_timeout = 5
 instance.total_timeout = 10
 instance.file_block_timeout = 5
 instance.file_total_timeout = 10
+instance.experimental_async_downloads = true
 instance.highlight_sync_policy = "respect_remote_deletions"
 instance.ui = {}
 instance.rd_settings = {
@@ -55,6 +58,22 @@ local articles = instance:getArticleList()
 assert(type(articles) == "table" and #articles == 1, "bookmark list request failed")
 local article_id = articles[1].id
 assert(type(article_id) == "string" and article_id:match("^[A-Za-z0-9]+$"), "unexpected article id")
+
+local subprocess_path = download_dir .. "/subprocess-download.epub"
+local subprocess_job = instance:runSubprocessDownload(
+    subprocess_path,
+    server_url .. "/api/bookmarks/" .. article_id .. "/article.epub",
+    instance.access_token
+)
+assert(subprocess_job, "subprocess downloader did not start")
+local subprocess_deadline = socket.gettime() + 10
+while not FFIUtil.isSubProcessDone(subprocess_job.pid) do
+    assert(socket.gettime() < subprocess_deadline, "subprocess downloader timed out")
+    socket.sleep(0.05)
+end
+local subprocess_result = instance:finishSubprocessDownload(subprocess_job, articles[1])
+assert(subprocess_result == Defaults.DOWNLOAD_DONE, "subprocess article download failed")
+assert(lfs.attributes(subprocess_path, "mode") == "file", "subprocess article file missing")
 
 local download_result = instance:download(articles[1])
 assert(download_result == Defaults.DOWNLOAD_DONE, "article download failed")

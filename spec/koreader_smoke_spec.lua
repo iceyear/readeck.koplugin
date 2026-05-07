@@ -305,6 +305,20 @@ local function collect_menu_texts(items, texts)
     return texts
 end
 
+local function find_menu_item(items, expected_text)
+    for _, item in ipairs(items or {}) do
+        local text = item.text
+        if not text and item.text_func then
+            local ok, value = pcall(item.text_func)
+            assert.is_true(ok, value)
+            text = value
+        end
+        if text == expected_text then
+            return item
+        end
+    end
+end
+
 local function stub_instance(overrides)
     local instance = {
         directory = "/tmp/readeck",
@@ -340,6 +354,9 @@ local function stub_instance(overrides)
         getLanguageOverrideLabel = function()
             return "Follow KOReader language"
         end,
+        getLogLevelLabel = function()
+            return "Info"
+        end,
         getArticleID = function()
             return nil
         end,
@@ -372,7 +389,68 @@ describe("KOReader smoke", function()
     it("loads the plugin class and builds the main menu with KOReader-shaped APIs", function()
         run_menu_smoke()
         local metadata = dofile("readeck.koplugin/_meta.lua")
-        assert.are.equal("0.1.0", metadata.version)
+        assert.are.equal("0.1.1", metadata.version)
+    end)
+
+    it("shows license and source repository in the About dialog", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local shown
+        package.loaded["ui/widget/infomessage"] = nil
+        package.preload["ui/widget/infomessage"] = function()
+            return {
+                new = function(_, options)
+                    return options or {}
+                end,
+            }
+        end
+        package.loaded["ui/uimanager"] = nil
+        package.preload["ui/uimanager"] = function()
+            return {
+                show = function(_, widget)
+                    shown = widget
+                end,
+                close = function() end,
+                forceRePaint = function() end,
+                scheduleIn = function(_, delay_or_callback, maybe_callback)
+                    local callback = maybe_callback or delay_or_callback
+                    callback()
+                end,
+                unschedule = function() end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local instance = setmetatable({}, { __index = Readeck })
+        instance:showAboutDialog()
+
+        assert.is.truthy(shown)
+        assert.is_true(shown.text:find("Version: 0.1.1", 1, true) ~= nil)
+        assert.is_true(shown.text:find("License: MIT", 1, true) ~= nil)
+        assert.is_true(shown.text:find("https://github.com/iceyear/readeck.koplugin", 1, true) ~= nil)
+    end)
+
+    it("groups client network controls under the Readeck client submenu", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local menu_items = {}
+        Readeck.addToMainMenu(stub_instance(), menu_items)
+
+        local readeck_items = menu_items.readeck.sub_item_table_func()
+        local settings_item = find_menu_item(readeck_items, "Settings")
+        assert.is.truthy(settings_item)
+
+        local settings_items = settings_item.sub_item_table_func()
+        assert.is_nil(find_menu_item(settings_items, "Experimental subprocess downloads"))
+        assert.is_nil(find_menu_item(settings_items, "Network timeouts"))
+
+        local client_item = find_menu_item(settings_items, "Configure Readeck client")
+        assert.is.truthy(client_item)
+        local client_items = client_item.sub_item_table_func()
+        assert.is.truthy(find_menu_item(client_items, "Download limits"))
+        assert.is.truthy(find_menu_item(client_items, "Experimental subprocess downloads"))
+        assert.is.truthy(find_menu_item(client_items, "Network timeouts"))
     end)
 
     it("shows current-article highlight sync only for opened Readeck articles", function()
@@ -644,6 +722,50 @@ describe("KOReader smoke", function()
         assert.are.equal("", saved_settings.auth_token)
         assert.are.equal("", saved_settings.access_token)
         assert.are.equal("", saved_settings.oauth_refresh_token)
+    end)
+
+    it("migrates legacy subprocess downloads back to explicit opt-in", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local Defaults = require("readeck.core.defaults")
+        local instance = setmetatable({}, { __index = Readeck })
+        Defaults.apply(instance)
+
+        local settings = {
+            completion_action_sync_policy_version = Defaults.COMPLETION_ACTION_SYNC_POLICY_VERSION,
+            experimental_async_downloads = true,
+        }
+        instance:loadSettingsIntoState(settings)
+
+        assert.is_true(instance.experimental_async_downloads)
+        assert.is_true(instance:migrateSettingsIfNeeded(settings))
+        assert.is_false(instance.experimental_async_downloads)
+        assert.is_false(settings.experimental_async_downloads)
+        assert.are.equal(
+            Defaults.EXPERIMENTAL_ASYNC_DOWNLOADS_OPT_IN_VERSION,
+            instance.experimental_async_downloads_opt_in_version
+        )
+        assert.are.equal(
+            Defaults.EXPERIMENTAL_ASYNC_DOWNLOADS_OPT_IN_VERSION,
+            settings.experimental_async_downloads_opt_in_version
+        )
+    end)
+
+    it("loads the configured plugin log level into the logger filter", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local Defaults = require("readeck.core.defaults")
+        local Log = require("readeck.core.log")
+        local instance = setmetatable({}, { __index = Readeck })
+        Defaults.apply(instance)
+
+        instance:loadSettingsIntoState({ log_level = "warn" })
+
+        assert.are.equal("warn", instance.log_level)
+        assert.are.equal(Log.WARN, Log.level)
+        assert.are.equal("Warnings", instance:getLogLevelLabel())
     end)
 
     it("imports Readeck annotations into KOReader sidecars during highlight sync", function()
@@ -1079,7 +1201,7 @@ describe("KOReader smoke", function()
         assert.are.equal("green", local_annotations[1].readeck_synced_color)
     end)
 
-    it("refreshes server info during automatic highlight feature detection", function()
+    it("caches server info during automatic highlight feature detection", function()
         package.path = "./readeck.koplugin/?.lua;" .. package.path
         install_koreader_stubs()
         local encoded_body
@@ -1101,7 +1223,7 @@ describe("KOReader smoke", function()
         local refresh_count = 0
         local instance = setmetatable({
             access_token = "token",
-            server_info = { version = { canonical = "0.22.1" } },
+            server_info = nil,
             highlight_feature_policy = "auto",
             getBearerToken = function()
                 return true
@@ -1138,6 +1260,10 @@ describe("KOReader smoke", function()
         assert.are.equal(1, refresh_count)
         assert.are.equal("local note", encoded_body.note)
         assert.are.equal("none", encoded_body.color)
+
+        local profile = instance:getHighlightPayloadProfile()
+        assert.is_true(profile.notes)
+        assert.are.equal(1, refresh_count)
     end)
 
     it("falls back to the blocking downloader when KOReader async HTTP fails", function()
@@ -1157,6 +1283,9 @@ describe("KOReader smoke", function()
         end
 
         local Readeck = dofile("readeck.koplugin/main.lua")
+        require("ui/uimanager").looper = {
+            add_callback = function() end,
+        }
         local blocking_downloads = 0
         local skip_checks = 0
         local instance = setmetatable({
@@ -1189,13 +1318,14 @@ describe("KOReader smoke", function()
         assert.is_true(instance.async_http_client_checked)
     end)
 
-    it("uses the blocking downloader by default even when concurrency is configured", function()
+    it("uses the blocking downloader when no parallel backend is available", function()
         package.path = "./readeck.koplugin/?.lua;" .. package.path
         install_koreader_stubs()
         package.loaded.httpclient = nil
         package.preload.httpclient = function()
             error("async httpclient should stay disabled by default")
         end
+        require("ui/uimanager").looper = nil
 
         local Readeck = dofile("readeck.koplugin/main.lua")
         local blocking_downloads = 0
@@ -1228,6 +1358,144 @@ describe("KOReader smoke", function()
         assert.are.equal(1, blocking_downloads)
         assert.are.equal(0, skip_checks)
         assert.is_false(instance.async_http_client_checked)
+    end)
+
+    it("uses a subprocess downloader without the KOReader turbo looper", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+
+        package.loaded.httpclient = nil
+        package.preload.httpclient = function()
+            error("turbo httpclient should not be required for subprocess downloads")
+        end
+        require("ui/uimanager").looper = nil
+
+        package.loaded["ffi/util"] = nil
+        package.preload["ffi/util"] = function()
+            return {
+                template = function(text, ...)
+                    local values = { ... }
+                    return (
+                        text:gsub("%%(%d+)", function(index)
+                            return tostring(values[tonumber(index)] or "")
+                        end)
+                    )
+                end,
+                joinPath = function(left, right)
+                    return left .. "/" .. right
+                end,
+                gsplit = function()
+                    return function()
+                        return nil
+                    end
+                end,
+                runInSubProcess = function()
+                    return 123, 45
+                end,
+                isSubProcessDone = function(pid)
+                    return pid == 123
+                end,
+                terminateSubProcess = function() end,
+                readAllFromFD = function(fd)
+                    assert.are.equal(45, fd)
+                    return "downloaded\t200"
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local metadata_applied = false
+        local progress_synced = false
+        local instance = setmetatable({
+            access_token = "token",
+            download_concurrency = 2,
+            experimental_async_downloads = true,
+            server_url = "https://readeck.example",
+            getDownloadTarget = function(_, article)
+                return "/tmp/readeck-" .. article.id .. ".epub", "/api/bookmarks/" .. article.id .. "/article.epub"
+            end,
+            shouldSkipDownload = function()
+                return false
+            end,
+            applyDownloadedArticleMetadata = function()
+                metadata_applied = true
+            end,
+            syncReadingProgressFromRemote = function()
+                progress_synced = true
+            end,
+        }, { __index = Readeck })
+
+        local done_result
+        instance:downloadAsync({ id = "article1" }, function(result)
+            done_result = result
+        end)
+
+        assert.are.equal(3, done_result)
+        assert.is_true(metadata_applied)
+        assert.is_true(progress_synced)
+        assert.are.equal("subprocess", instance:getParallelDownloadMode())
+    end)
+
+    it("retries with the blocking downloader when a subprocess download fails", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        require("ui/uimanager").looper = nil
+
+        package.loaded["ffi/util"] = nil
+        package.preload["ffi/util"] = function()
+            return {
+                template = function(text, ...)
+                    local values = { ... }
+                    return (
+                        text:gsub("%%(%d+)", function(index)
+                            return tostring(values[tonumber(index)] or "")
+                        end)
+                    )
+                end,
+                joinPath = function(left, right)
+                    return left .. "/" .. right
+                end,
+                runInSubProcess = function()
+                    return 123, 45
+                end,
+                isSubProcessDone = function()
+                    return true
+                end,
+                terminateSubProcess = function() end,
+                readAllFromFD = function()
+                    return "failed\tTLS stalled"
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local blocking_downloads = 0
+        local instance = setmetatable({
+            access_token = "token",
+            download_concurrency = 2,
+            experimental_async_downloads = true,
+            server_url = "https://readeck.example",
+            getDownloadTarget = function(_, article)
+                return "/tmp/readeck-" .. article.id .. ".epub", "/api/bookmarks/" .. article.id .. "/article.epub"
+            end,
+            shouldSkipDownload = function()
+                return false
+            end,
+            download = function()
+                blocking_downloads = blocking_downloads + 1
+                return "downloaded-by-blocking-client"
+            end,
+        }, { __index = Readeck })
+
+        local done_result
+        instance:downloadAsync({ id = "article1" }, function(result)
+            done_result = result
+        end)
+
+        assert.are.equal("downloaded-by-blocking-client", done_result)
+        assert.are.equal(1, blocking_downloads)
+        assert.is_true(instance.subprocess_downloads_disabled)
+        assert.are.equal("blocking", instance:getParallelDownloadMode())
     end)
 
     it("skips an already downloaded article by Readeck ID", function()
@@ -1845,6 +2113,67 @@ describe("KOReader smoke", function()
         assert.is_true(message:find("Archived in Readeck: 1", 1, true) ~= nil)
         assert.is_true(message:find("Reading progress synced: 1", 1, true) ~= nil)
         assert.is_true(message:find("Removed from KOReader: 1", 1, true) ~= nil)
+    end)
+
+    it("lets dismissed article download progress be shown again from saved state", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local shown = {}
+        local closed = {}
+
+        package.loaded["ui/widget/infomessage"] = nil
+        package.preload["ui/widget/infomessage"] = function()
+            return {
+                new = function(_, options)
+                    return options or {}
+                end,
+            }
+        end
+        package.loaded["ui/uimanager"] = nil
+        package.preload["ui/uimanager"] = function()
+            return {
+                show = function(_, widget)
+                    table.insert(shown, widget)
+                end,
+                close = function(_, widget)
+                    table.insert(closed, widget)
+                end,
+                forceRePaint = function() end,
+                scheduleIn = function(_, delay_or_callback, maybe_callback)
+                    local callback = maybe_callback or delay_or_callback
+                    callback()
+                end,
+                unschedule = function() end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local instance = setmetatable({}, { __index = Readeck })
+
+        instance:showDownloadProgress({ completed = 0, downloaded = 0, skipped = 0, failed = 0 }, 2)
+        assert.are.equal(1, #shown)
+        assert.is_nil(shown[1].timeout)
+        assert.is_true(shown[1].dismissable)
+        assert.is_nil(closed[1])
+
+        shown[1].dismiss_callback()
+        assert.is_nil(instance.download_progress_info)
+        assert.is_true(instance.download_progress_hidden)
+
+        instance:showDownloadProgress({ completed = 1, downloaded = 1, skipped = 0, failed = 0 }, 2)
+        assert.are.equal(1, #shown)
+        assert.are.equal(1, instance.download_progress_state.counts.completed)
+        assert.is_true(instance:hasActiveDownloadProgress())
+
+        assert.is_true(instance:showExistingDownloadProgress())
+        assert.are.equal(2, #shown)
+        assert.is_false(instance.download_progress_hidden)
+        assert.is_true(shown[2].dismissable)
+
+        instance:closeDownloadProgress(true)
+        assert.are.equal(shown[2], closed[1])
+        assert.is_nil(instance.download_progress_info)
+        assert.is_nil(instance.download_progress_state)
     end)
 
     it("formats highlight sync counts in article sync results", function()

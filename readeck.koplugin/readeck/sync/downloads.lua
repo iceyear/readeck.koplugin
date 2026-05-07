@@ -9,6 +9,7 @@ local Progress = require("readeck.sync.progress")
 local Scheduler = require("readeck.sync.scheduler")
 local UIManager = require("ui/uimanager")
 local lfs = require("libs/libkoreader-lfs")
+local socket = require("socket")
 local util = require("util")
 
 local Downloads = {}
@@ -148,7 +149,10 @@ function Downloads.install(Readeck, deps)
     end
 
     function Readeck:getAsyncHTTPClient()
-        if not self.experimental_async_downloads or self:clampDownloadConcurrency(self.download_concurrency) <= 1 then
+        if self:clampDownloadConcurrency(self.download_concurrency) <= 1 then
+            return nil
+        end
+        if not (UIManager.looper and type(UIManager.looper.add_callback) == "function") then
             return nil
         end
         if self.async_http_client_checked then
@@ -168,6 +172,33 @@ function Downloads.install(Readeck, deps)
         end
         self.async_http_client = nil
         self.async_http_client_checked = true
+    end
+
+    function Readeck:canUseSubprocessDownloader()
+        local is_windows = package.config:sub(1, 1) == "\\"
+        return self:clampDownloadConcurrency(self.download_concurrency) > 1
+            and self.experimental_async_downloads == true
+            and not self.subprocess_downloads_disabled
+            and not is_windows
+            and type(FFIUtil.runInSubProcess) == "function"
+            and type(FFIUtil.isSubProcessDone) == "function"
+            and type(FFIUtil.terminateSubProcess) == "function"
+            and type(FFIUtil.readAllFromFD) == "function"
+    end
+
+    function Readeck:disableSubprocessDownloader(reason)
+        self.subprocess_downloads_disabled = true
+        Log:warn("Disabling subprocess article downloader:", reason or "subprocess failed")
+    end
+
+    function Readeck:getParallelDownloadMode()
+        if self:getAsyncHTTPClient() then
+            return "turbo"
+        end
+        if self:canUseSubprocessDownloader() then
+            return "subprocess"
+        end
+        return "blocking"
     end
 
     function Readeck:writeDownloadedArticle(local_path, body)
@@ -224,13 +255,148 @@ function Downloads.install(Readeck, deps)
         return failed
     end
 
-    function Readeck:downloadAsync(article, done)
-        local client = self:getAsyncHTTPClient()
-        if not client then
+    function Readeck:runSubprocessDownload(local_path, request_url, access_token)
+        if not self:canUseSubprocessDownloader() then
+            return nil, "subprocess downloader unavailable"
+        end
+        local block_timeout = self.file_block_timeout
+        local total_timeout = self.file_total_timeout
+        local pid, read_fd = FFIUtil.runInSubProcess(function(_, write_fd)
+            local function write_result(result, detail)
+                FFIUtil.writeToFD(write_fd, result .. "\t" .. tostring(detail or ""), true)
+            end
+
+            local ok, err = pcall(function()
+                local child_http = require("socket.http")
+                local child_socket = require("socket")
+                local child_socketutil = require("socketutil")
+
+                local file, open_err = io.open(local_path, "wb")
+                if not file then
+                    write_result("failed", open_err or "file open failed")
+                    return
+                end
+
+                child_socketutil:set_timeout(block_timeout, total_timeout)
+                local request = {
+                    url = request_url,
+                    method = "GET",
+                    headers = {
+                        ["Authorization"] = "Bearer " .. access_token,
+                        ["Accept"] = "application/epub+zip, */*",
+                    },
+                    sink = child_socketutil.file_sink(file),
+                }
+
+                local code, _, status = child_socket.skip(1, child_http.request(request))
+                child_socketutil:reset_timeout()
+                code = tonumber(code)
+
+                if code and code >= 200 and code < 300 then
+                    write_result("downloaded", code)
+                    return
+                end
+
+                os.remove(local_path)
+                write_result("failed", status or code or "network error")
+            end)
+
+            if not ok then
+                os.remove(local_path)
+                write_result("failed", err)
+            end
+        end, true)
+
+        if not pid then
+            return nil, read_fd
+        end
+        return {
+            pid = pid,
+            read_fd = read_fd,
+            local_path = local_path,
+            deadline = socket.gettime() + math.max(10, (tonumber(self.file_total_timeout) or 30) + 5),
+        }
+    end
+
+    function Readeck:finishSubprocessDownload(job, article)
+        local payload = ""
+        if job.read_fd then
+            payload = FFIUtil.readAllFromFD(job.read_fd) or ""
+        end
+        local result, detail = payload:match("^([^\t]*)\t?(.*)$")
+        if result == "downloaded" then
+            self:applyDownloadedArticleMetadata(job.local_path, article)
+            self:syncReadingProgressFromRemote(job.local_path, article)
+            return downloaded, detail
+        end
+
+        if lfs.attributes(job.local_path, "mode") == "file" then
+            os.remove(job.local_path)
+        end
+        Log:warn("Subprocess article download failed:", article.id, detail or "unknown")
+        return failed, detail
+    end
+
+    function Readeck:retryDownloadBlockingAfterSubprocessFailure(article, reason)
+        self:disableSubprocessDownloader(reason)
+        Log:warn("Retrying article download with blocking client:", article.id)
+        return self:download(article)
+    end
+
+    function Readeck:downloadInSubprocess(article, done)
+        local local_path, item_url = self:getDownloadTarget(article)
+        if self:shouldSkipDownload(local_path, article) then
+            self:applyDownloadedArticleMetadata(local_path, article)
+            self:syncReadingProgressFromRemote(local_path, article)
+            done(skipped)
+            return Scheduler.ASYNC
+        end
+
+        local job, err = self:runSubprocessDownload(local_path, self.server_url .. item_url, self.access_token)
+        if not job then
+            self:disableSubprocessDownloader(err)
             UIManager:scheduleIn(0, function()
                 done(self:download(article))
             end)
             return Scheduler.ASYNC
+        end
+
+        local function poll()
+            if FFIUtil.isSubProcessDone(job.pid) then
+                local result, detail = self:finishSubprocessDownload(job, article)
+                if result == failed then
+                    result = self:retryDownloadBlockingAfterSubprocessFailure(article, detail)
+                end
+                done(result)
+                return
+            end
+            if socket.gettime() > job.deadline then
+                FFIUtil.terminateSubProcess(job.pid)
+                if lfs.attributes(local_path, "mode") == "file" then
+                    os.remove(local_path)
+                end
+                Log:warn("Subprocess article download timed out:", article.id)
+                done(self:retryDownloadBlockingAfterSubprocessFailure(article, "timeout"))
+                return
+            end
+            UIManager:scheduleIn(0.1, poll)
+        end
+
+        UIManager:scheduleIn(0.1, poll)
+        return Scheduler.ASYNC
+    end
+
+    function Readeck:downloadAsync(article, done)
+        local client = self:getAsyncHTTPClient()
+        if not client then
+            if self:canUseSubprocessDownloader() then
+                return self:downloadInSubprocess(article, done)
+            else
+                UIManager:scheduleIn(0, function()
+                    done(self:download(article))
+                end)
+                return Scheduler.ASYNC
+            end
         end
 
         local local_path, item_url = self:getDownloadTarget(article)
@@ -280,12 +446,82 @@ function Downloads.install(Readeck, deps)
         return skipped
     end
 
-    function Readeck:showDownloadProgress(counts, total, action_counts)
+    function Readeck:copyProgressCounts(counts)
+        local copy = {}
+        for key, value in pairs(counts or {}) do
+            copy[key] = value
+        end
+        return copy
+    end
+
+    function Readeck:updateDownloadProgressState(counts, total, action_counts)
+        self.download_progress_state = {
+            active = true,
+            action_counts = self:copyProgressCounts(action_counts),
+            counts = self:copyProgressCounts(counts),
+            total = total or 0,
+        }
+    end
+
+    function Readeck:hasActiveDownloadProgress()
+        return self.download_progress_state and self.download_progress_state.active == true
+    end
+
+    function Readeck:showDownloadProgress(counts, total, action_counts, force)
+        self:updateDownloadProgressState(counts, total, action_counts)
+        if self.download_progress_hidden and not force then
+            return
+        end
+
         local message = self:formatDownloadProgressMessage(counts, total, action_counts)
-        UIManager:show(InfoMessage:new({
+        self:closeDownloadProgress()
+        local progress_info
+        progress_info = InfoMessage:new({
             text = message,
-            timeout = 1,
-        }))
+            dismissable = true,
+            dismiss_callback = function()
+                if self.closing_download_progress then
+                    return
+                end
+                if self.download_progress_info == progress_info then
+                    self.download_progress_info = nil
+                end
+                self.download_progress_hidden = true
+            end,
+        })
+        self.download_progress_info = progress_info
+        self.download_progress_hidden = false
+        UIManager:show(self.download_progress_info)
+        UIManager:forceRePaint()
+    end
+
+    function Readeck:showExistingDownloadProgress()
+        local state = self.download_progress_state
+        if not (state and state.active) then
+            UIManager:show(InfoMessage:new({ text = L("No sync progress to show.") }))
+            return false
+        end
+        self.download_progress_hidden = false
+        self:showDownloadProgress(state.counts, state.total, state.action_counts, true)
+        return true
+    end
+
+    function Readeck:closeDownloadProgress(clear_state)
+        if not self.download_progress_info then
+            if clear_state then
+                self.download_progress_state = nil
+                self.download_progress_hidden = false
+            end
+            return
+        end
+        self.closing_download_progress = true
+        UIManager:close(self.download_progress_info)
+        self.closing_download_progress = false
+        self.download_progress_info = nil
+        if clear_state then
+            self.download_progress_state = nil
+            self.download_progress_hidden = false
+        end
         UIManager:forceRePaint()
     end
 
@@ -307,13 +543,17 @@ function Downloads.install(Readeck, deps)
             return nil
         end
 
+        self.download_progress_hidden = false
         self:showDownloadProgress(counts, total, options.action_counts)
-        local max_concurrent = self:getAsyncHTTPClient() and self:clampDownloadConcurrency(self.download_concurrency)
+        local download_mode = self:getParallelDownloadMode()
+        local max_concurrent = download_mode ~= "blocking" and self:clampDownloadConcurrency(self.download_concurrency)
             or 1
-        if max_concurrent <= 1 then
+        if download_mode == "blocking" then
             Log:info("Using blocking article downloader")
+        elseif download_mode == "turbo" then
+            Log:info("Using KOReader async article downloader with concurrency:", max_concurrent)
         else
-            Log:info("Using experimental async article downloader with concurrency:", max_concurrent)
+            Log:info("Using asynchronous subprocess article downloader with concurrency:", max_concurrent)
         end
         self.download_scheduler = Scheduler.run(articles, {
             max_concurrent = max_concurrent,
@@ -338,6 +578,7 @@ function Downloads.install(Readeck, deps)
             end,
             on_finish = function()
                 self.download_scheduler = nil
+                self:closeDownloadProgress(true)
                 if options.on_finish then
                     options.on_finish(counts, remote_article_ids)
                 end

@@ -23,9 +23,12 @@ function OAuth.install(Readeck, deps)
     OAuthForm.install(Readeck, deps)
     OAuthDevicePolling.install(Readeck, deps)
 
-    function Readeck:refreshServerInfo(quiet)
+    function Readeck:refreshServerInfo(quiet, force)
         if self:isempty(self.server_url) then
             return nil
+        end
+        if type(self.server_info) == "table" and not force then
+            return self.server_info
         end
         local info, err = self:callAPI("GET", Api.paths.info, {}, "", "", true)
         if type(info) == "table" then
@@ -45,7 +48,7 @@ function OAuth.install(Readeck, deps)
     function Readeck:serverSupportsOAuth()
         local support = Features.supports_oauth(self.server_info)
         if support == nil then
-            support = Features.supports_oauth(self:refreshServerInfo(true))
+            support = Features.supports_oauth(self:refreshServerInfo(true, true))
         end
         return support
     end

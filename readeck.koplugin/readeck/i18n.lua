@@ -12,6 +12,11 @@ local language_modules = {
 local language_cache = {}
 local override_language = ""
 
+local native_language_names = {
+    en = "English",
+    ["zh-cn"] = "简体中文",
+}
+
 local function load_language(language)
     local module_name = language_modules[language]
     if not module_name then
@@ -52,6 +57,10 @@ function I18n.set_language_override(language)
     else
         override_language = I18n.normalize_language(language)
     end
+end
+
+function I18n.language_native_name(language)
+    return native_language_names[I18n.normalize_language(language)] or tostring(language or "")
 end
 
 function I18n.current_language(reader_settings, gettext)

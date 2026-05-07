@@ -18,6 +18,8 @@ Readeck Plugin for KOReader is a plugin that allows you to synchronize articles 
 
 This project started as a **personal, self‑use plugin**, rapidly prototyped with AI assistance (GitHub Copilot). Thanks to valuable feedback and contributions from the community, it has gradually grown into something useful for more people.
 
+Source code is published at [github.com/iceyear/readeck.koplugin](https://github.com/iceyear/readeck.koplugin) under the [MIT License](LICENSE).
+
 The plugin is functional and actively used, but it may not work perfectly in every scenario. The implementation is being moved toward smaller Lua modules with tests and formatting/lint checks.
 
 Due to limited personal time, my focus going forward will mainly be on **maintenance, stability, and critical bug fixes**.
@@ -130,7 +132,32 @@ During sync, the plugin can send KOReader's local reading progress below 100% ba
 
 ## 🔧 Advanced Settings
 
-### Completion Action Options
+### Readeck Server / Authentication
+
+* **Configure Readeck server > Server URL**: Set the base Readeck URL without `/api`
+* **Configure Readeck server > Readeck server features**: Auto-detect `/api/info`, force modern Readeck 0.22.2+ annotation fields, or force legacy compatibility
+* **Authentication > Authorize with OAuth**: Use device-flow OAuth login (with optional QR code)
+* **Authentication > Reset access token**: Clear token so the plugin re-authenticates
+* **Authentication > Clear all cached tokens**: Remove cached OAuth/token data
+* **Authentication > API token**: Configure a Readeck API token
+
+### Readeck Client
+
+* **Download limits**: Set the number of articles processed per sync and the download concurrency
+* **Experimental subprocess downloads**: Try parallel downloads without KOReader's async HTTP looper. If this backend fails, the plugin disables it for the current run and retries with the blocking downloader.
+* **Network timeouts**: Tune network timeouts for slow connections or large downloads
+* **Language**: Follow KOReader's language, or force the plugin UI to English / Simplified Chinese
+* **Log level**: Filter plugin logs (`Info` by default, `Debug` for troubleshooting)
+
+### Article Selection
+
+* **Download folder**: Choose the KOReader folder used for downloaded articles
+* **Only download articles with tag**: Only download entries with a specific label
+* **Sort articles by**: Choose the server-side ordering (added/published/duration/site/title)
+* **Tags to ignore**: Skip entries containing any of the specified tags
+* **Tags to add to new articles**: Auto-label newly added bookmarks (including links added from KOReader)
+
+### Article Actions
 
 * **Process finished articles in Readeck**: Process entries marked as finished
 * **Process 100% read articles in Readeck**: Process entries that reached 100% progress
@@ -138,47 +165,24 @@ During sync, the plugin can send KOReader's local reading progress below 100% ba
 * **Process completion actions when syncing**: Run completion actions automatically during sync
 * **Sync reading progress to Readeck (beta)**: Update Readeck's reading progress below 100% for local articles that remain on the device, and accept newer incomplete Readeck progress locally
 * **Remove local files missing from Readeck**: Remove local files that no longer exist on the server
-
-### Tag Settings
-
-* **Only download articles with tag**: Only download entries with a specific label
-* **Tags to ignore**: Skip entries containing any of the specified tags
-* **Tags to add to new articles**: Auto-label newly added bookmarks (including links added from KOReader)
-
-### Sorting & Sync Limits
-
-* **Sort articles by**: Choose the server-side ordering (added/published/duration/site/title)
-* **Number of articles to download per sync**: Limit how many entries are processed per sync run
-* **Concurrent downloads**: Choose how many article downloads run at once. Use `1` for the safest behavior on very slow devices, or `2-3` when the device and server can handle it.
-* **Periodic sync (beta)**: Enable a KOReader timer and choose the interval in minutes
-* **Language**: Follow KOReader's language, or force the plugin UI to English / Simplified Chinese
-* **Configure Readeck server > Readeck server features**: Auto-detect `/api/info`, force modern Readeck 0.22.2+ annotation fields, or force legacy compatibility
-* **Highlight update strategy**: Merge linked note/color edits, or force Readeck/KOReader to overwrite the other side
-* **Remote-deleted highlights**: Choose whether deleted Readeck annotations should be restored from KOReader or kept local-only
-
-Sync is paced for KOReader devices: article downloads can run with limited concurrency, highlight sync before article sync is split across local files so progress can render, and the article-list request only uses KOReader's async HTTP client when its async looper is already active. Otherwise it safely falls back to the blocking request path.
-
-### Star / Like Sync
-
-* **“Like” entries in Readeck**: Mark entries as liked based on your KOReader star rating threshold
-* **Label entries in Readeck with their star rating**: Add labels like `1-star` … `5-star`
-
-### Review → Tags
-
-* **Send review as tags**: Treat comma-separated content in the KOReader **Review** field as tags and send them to Readeck
-
-### History Management
-
 * **Remove finished articles from history**: Clean up KOReader history for completed entries
 * **Remove 100% read articles from history**: Clean up history for fully read entries
 
-### Authentication & Networking
+### Highlights / Periodic Sync
 
-* **Authorize with OAuth**: Use device-flow OAuth login (with optional QR code)
-* **Reset access token**: Clear token so the plugin re-authenticates
-* **Clear all cached tokens**: Remove cached OAuth/token data
-* **API token**: Configure a Readeck API token
-* **Set timeout**: Tune network timeouts for slow connections or large downloads
+* **Sync highlights before article sync**: Export/import highlights before retrieving articles
+* **Sync highlights when closing a document**: Sync the current Readeck article's highlights when closing it
+* **Periodic sync (beta)**: Enable a KOReader timer and choose the interval in minutes
+* **Highlight update strategy**: Merge linked note/color edits, or force Readeck/KOReader to overwrite the other side
+* **Remote-deleted highlights**: Choose whether deleted Readeck annotations should be restored from KOReader or kept local-only
+
+Sync is paced for KOReader devices: article downloads can run with limited concurrency when a supported async backend is available, highlight sync before article sync is split across local files so progress can render, and the article-list request only uses KOReader's async HTTP client when its async looper is already active. Unsupported or failing backends safely fall back to the blocking request path. The sync progress popup can be dismissed, moved with KOReader's standard movable dialog gestures, and reopened from the Readeck menu while sync is still running.
+
+### Ratings And Review Tags
+
+* **“Like” entries in Readeck**: Mark entries as liked based on your KOReader star rating threshold
+* **Label entries in Readeck with their star rating**: Add labels like `1-star` … `5-star`
+* **Send review as tags**: Treat comma-separated content in the KOReader **Review** field as tags and send them to Readeck
 
 ## Development
 
@@ -211,3 +215,7 @@ CI runs Stylua, Luacheck, Busted, mock Readeck API tests, the stub smoke test, a
 * Based on [wallabag2.koplugin by clach04](https://github.com/clach04/wallabag2.koplugin)
 * [KOReader](https://github.com/koreader/koreader) — The best FOSS e-ink book reader
 * [Readeck](https://readeck.org) — Making web content readable again
+
+## 📄 License
+
+This plugin is open source under the [MIT License](LICENSE). Source repository: [https://github.com/iceyear/readeck.koplugin](https://github.com/iceyear/readeck.koplugin).

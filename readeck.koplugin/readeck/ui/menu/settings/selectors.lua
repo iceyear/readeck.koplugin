@@ -4,6 +4,7 @@ local RadioButtonWidget = require("ui/widget/radiobuttonwidget")
 local UIManager = require("ui/uimanager")
 
 local I18n = require("readeck.i18n")
+local Log = require("readeck.core.log")
 
 local Selectors = {}
 
@@ -17,10 +18,10 @@ function Selectors.install(Readeck, deps)
             return L("Follow KOReader language")
         end
         if language == "en" then
-            return L("English")
+            return I18n.language_native_name("en")
         end
         if language == "zh-cn" then
-            return L("Simplified Chinese")
+            return I18n.language_native_name("zh-cn")
         end
         return language
     end
@@ -28,8 +29,8 @@ function Selectors.install(Readeck, deps)
     function Readeck:setLanguageOverride(touchmenu_instance)
         local options = {
             { "", L("Follow KOReader language") },
-            { "en", L("English") },
-            { "zh-cn", L("Simplified Chinese") },
+            { "en", I18n.language_native_name("en") },
+            { "zh-cn", I18n.language_native_name("zh-cn") },
         }
         local radio_buttons = {}
         for _, option in ipairs(options) do
@@ -48,6 +49,52 @@ function Selectors.install(Readeck, deps)
                     self.language_override = radio.provider
                     I18n.set_language_override(self.language_override)
                     self.sort_options = self:buildSortOptions()
+                    self:saveSettings()
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
+                end
+            end,
+        }))
+    end
+
+    function Readeck:getLogLevelLabel()
+        local level = Log:normalizeLevel(self.log_level)
+        if level == "debug" then
+            return L("Debug")
+        end
+        if level == "warn" then
+            return L("Warnings")
+        end
+        if level == "error" then
+            return L("Errors")
+        end
+        return L("Info")
+    end
+
+    function Readeck:setLogLevel(touchmenu_instance)
+        local options = {
+            { "error", L("Errors") },
+            { "warn", L("Warnings") },
+            { "info", L("Info") },
+            { "debug", L("Debug") },
+        }
+        local current = Log:normalizeLevel(self.log_level)
+        local radio_buttons = {}
+        for _, option in ipairs(options) do
+            table.insert(radio_buttons, {
+                { text = option[2], provider = option[1], checked = current == option[1] },
+            })
+        end
+
+        UIManager:show(RadioButtonWidget:new({
+            title_text = L("Log level"),
+            cancel_text = L("Cancel"),
+            ok_text = L("Apply"),
+            radio_buttons = radio_buttons,
+            callback = function(radio)
+                if radio then
+                    self.log_level = Log:setLevel(radio.provider)
                     self:saveSettings()
                     if touchmenu_instance then
                         touchmenu_instance:updateItems()
@@ -135,7 +182,7 @@ function Selectors.install(Readeck, deps)
                     self.highlight_feature_policy = radio.provider
                     if self.highlight_feature_policy == "auto" then
                         NetworkMgr:runWhenOnline(function()
-                            self:refreshServerInfo(true)
+                            self:refreshServerInfo(true, true)
                         end)
                     end
                     self:saveSettings()

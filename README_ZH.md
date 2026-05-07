@@ -12,6 +12,8 @@
 
 KOReader Readeck 插件允许你将 Readeck 服务器上的文章同步到 KOReader 设备上。Readeck 是一个简洁的网络应用，让你能够保存喜欢并希望永久保留的网页内容。
 
+本插件采用 [MIT 协议](LICENSE)开源，源码托管于 [github.com/iceyear/readeck.koplugin](https://github.com/iceyear/readeck.koplugin)。
+
 ## 🌟 特点
 
 - 📊 **阅读进度**：追踪阅读进度并相应处理文章。
@@ -154,3 +156,7 @@ CI 会在 GitHub Actions 中运行 Stylua、Luacheck、Busted、模拟 Readeck A
 - 基于 [clach04 的 wallabag2.koplugin](https://github.com/clach04/wallabag2.koplugin) 开发
 - [KOReader](https://github.com/koreader/koreader)，一个开源电子书阅读应用。
 - [Readeck](https://readeck.org)，一个简洁的网络应用，让你能够保存喜欢并希望永久保留的网页内容。
+
+## 📄 许可证
+
+本插件采用 [MIT 协议](LICENSE)开源。源码仓库：[https://github.com/iceyear/readeck.koplugin](https://github.com/iceyear/readeck.koplugin)。

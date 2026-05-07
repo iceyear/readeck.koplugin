@@ -44,6 +44,9 @@ Readeck.addToMainMenu({
     getLanguageOverrideLabel = function()
         return "Follow KOReader language"
     end,
+    getLogLevelLabel = function()
+        return "Info"
+    end,
     getArticleID = function()
         return nil
     end,

@@ -138,6 +138,14 @@ Downloads to folder: %1]]
                 if not is_current_document_readeck_article(self) then
                     table.remove(items, 2)
                 end
+                if Readeck.hasActiveDownloadProgress(self) then
+                    table.insert(items, 2, {
+                        text = L("Show sync progress"),
+                        callback = function()
+                            Readeck.showExistingDownloadProgress(self)
+                        end,
+                    })
+                end
                 return items
             end,
         }

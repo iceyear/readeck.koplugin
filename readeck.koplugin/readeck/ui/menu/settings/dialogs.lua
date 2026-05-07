@@ -50,6 +50,8 @@ The 'Remove local files missing from Readeck' option will remove local files tha
             text = T(
                 L([[Readeck for KOReader
 Version: %1
+License: MIT
+Source: https://github.com/iceyear/readeck.koplugin
 
 Synchronises articles with a Readeck server.
 

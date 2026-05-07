@@ -133,7 +133,7 @@ function Export.install(Readeck, deps)
         if policy == "legacy" then
             return { notes = false, none_color = false }
         end
-        return Features.highlight_payload_profile(self:refreshServerInfo(true) or self.server_info)
+        return Features.highlight_payload_profile(self.server_info or self:refreshServerInfo(true))
     end
 
     function Readeck:addRemoteHighlightToAnnotations(path, annotations, remote_highlight, profile, options)

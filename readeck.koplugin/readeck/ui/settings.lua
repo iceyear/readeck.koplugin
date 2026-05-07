@@ -120,7 +120,7 @@ Restart KOReader after editing the config file.]]),
                             self:saveSettings()
                             if (self.highlight_feature_policy or "auto") == "auto" then
                                 NetworkMgr:runWhenOnline(function()
-                                    self:refreshServerInfo(true)
+                                    self:refreshServerInfo(true, true)
                                 end)
                             end
                             UIManager:close(self.settings_dialog)
@@ -279,7 +279,7 @@ Username/password login is no longer supported by current Readeck versions.]]),
 
     function Readeck:editTimeoutSettings()
         self.timeout_settings_dialog = MultiInputDialog:new({
-            title = L("Set timeout"),
+            title = L("Network timeouts"),
             fields = {
                 {
                     text = self.block_timeout,

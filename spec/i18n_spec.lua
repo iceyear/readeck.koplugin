@@ -39,6 +39,11 @@ describe("readeck.i18n", function()
         )
     end)
 
+    it("keeps built-in language names in their native display form", function()
+        assert.are.equal("English", I18n.language_native_name("en_US"))
+        assert.are.equal("简体中文", I18n.language_native_name("zh_CN"))
+    end)
+
     it("prefers KOReader gettext when it already has a translation", function()
         local gettext = function(message)
             if message == "Cancel" then
@@ -66,6 +71,13 @@ describe("readeck.i18n", function()
             I18n.translate("Label entries in Readeck with their star rating", nil, settings("zh_CN"))
         )
         assert.are.equal("认证", I18n.translate("Authentication", nil, settings("zh_CN")))
+        assert.are.equal("下载限制", I18n.translate("Download limits", nil, settings("zh_CN")))
+        assert.are.equal("网络超时", I18n.translate("Network timeouts", nil, settings("zh_CN")))
+        assert.are.equal("文章选择", I18n.translate("Article selection", nil, settings("zh_CN")))
+        assert.are.equal("文章动作", I18n.translate("Article actions", nil, settings("zh_CN")))
+        assert.are.equal("评分和评论标签", I18n.translate("Ratings and review tags", nil, settings("zh_CN")))
+        assert.are.equal("日志等级：%1", I18n.translate("Log level: %1", nil, settings("zh_CN")))
+        assert.are.equal("显示同步进度", I18n.translate("Show sync progress", nil, settings("zh_CN")))
         assert.are.equal("失败：%1", I18n.translate("Failed: %1", nil, settings("zh_CN")))
         assert.are.equal(
             "正在同步文章… 已检查 %1/%2",
