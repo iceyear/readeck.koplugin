@@ -91,17 +91,29 @@ jobs:
           path: |
             references/koreader/base/build/*
             references/koreader/koreader-emulator-*
-          key: koreader-runtime-${{ runner.os }}-${{ steps.koreader.outputs.tag }}
+          key: koreader-runtime-v2-${{ runner.os }}-${{ steps.koreader.outputs.tag }}
 
       - name: Locate cached KOReader emulator runtime
         id: cached-koreader-runtime
         run: |
+          is_valid_runtime() {
+            runtime_dir="$1"
+            test -x "$runtime_dir/luajit" \
+              && test -f "$runtime_dir/setupkoenv.lua" \
+              && test -f "$runtime_dir/ffi/loadlib.lua" \
+              && test -d "$runtime_dir/frontend" \
+              && test -d "$runtime_dir/common"
+          }
+
           runtime_dir=""
           if [ "${{ steps.koreader-runtime-cache.outputs.cache-hit }}" = "true" ]; then
             while IFS= read -r luajit_path; do
-              if [ -x "$luajit_path" ]; then
-                runtime_dir="$(dirname "$luajit_path")"
+              candidate="$(dirname "$luajit_path")"
+              if is_valid_runtime "$candidate"; then
+                runtime_dir="$candidate"
                 break
+              else
+                echo "Ignoring incomplete cached KOReader runtime at $candidate"
               fi
             done < <(find references/koreader -path '*/koreader-emulator-*/koreader/luajit' -print)
           fi
@@ -179,11 +191,23 @@ jobs:
 
       - name: Locate KOReader emulator runtime
         run: |
+          is_valid_runtime() {
+            runtime_dir="$1"
+            test -x "$runtime_dir/luajit" \
+              && test -f "$runtime_dir/setupkoenv.lua" \
+              && test -f "$runtime_dir/ffi/loadlib.lua" \
+              && test -d "$runtime_dir/frontend" \
+              && test -d "$runtime_dir/common"
+          }
+
           runtime_dir=""
           while IFS= read -r luajit_path; do
-            if [ -x "$luajit_path" ]; then
-              runtime_dir="$(dirname "$luajit_path")"
+            candidate="$(dirname "$luajit_path")"
+            if is_valid_runtime "$candidate"; then
+              runtime_dir="$candidate"
               break
+            else
+              echo "Ignoring incomplete KOReader runtime at $candidate"
             fi
           done < <(find references/koreader -path '*/koreader-emulator-*/koreader/luajit' -print)
           if [ -z "$runtime_dir" ]; then
@@ -192,6 +216,8 @@ jobs:
             find references/koreader -maxdepth 3 -type d -name 'koreader-emulator*' -print >&2
             echo "Available luajit files:" >&2
             find references/koreader -maxdepth 6 -name luajit -print >&2
+            echo "Available ffi/loadlib.lua files:" >&2
+            find references/koreader -maxdepth 6 -path '*/ffi/loadlib.lua' -print >&2
             exit 1
           fi
           echo "KOREADER_BUILD_DIR=$runtime_dir" >> "$GITHUB_ENV"
