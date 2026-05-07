@@ -11,6 +11,7 @@ local Readeck = dofile(plugin_dir .. "/main.lua")
 local menu_items = {}
 Readeck.addToMainMenu({
     directory = "/tmp/readeck",
+    language_override = "",
     filter_tag = "",
     sort_param = "-created",
     sort_options = {
@@ -40,6 +41,9 @@ Readeck.addToMainMenu({
     isempty = function(_, value)
         return value == nil or value == ""
     end,
+    getLanguageOverrideLabel = function()
+        return "Follow KOReader language"
+    end,
     getArticleID = function()
         return nil
     end,
@@ -47,7 +51,7 @@ Readeck.addToMainMenu({
 
 assert(menu_items.readeck, "Readeck menu item was not registered")
 assert(menu_items.readeck.text == "Readeck", "unexpected Readeck menu title")
-assert(type(menu_items.readeck.sub_item_table) == "table", "Readeck submenu is missing")
+assert(type(menu_items.readeck.sub_item_table_func) == "function", "Readeck submenu is missing")
 
 local function contains_menu_text(items, expected)
     for _, item in ipairs(items or {}) do
@@ -58,15 +62,20 @@ local function contains_menu_text(items, expected)
         if text == expected then
             return true
         end
-        if contains_menu_text(item.sub_item_table, expected) then
+        local sub_items = item.sub_item_table
+        if not sub_items and item.sub_item_table_func then
+            sub_items = item.sub_item_table_func()
+        end
+        if contains_menu_text(sub_items, expected) then
             return true
         end
     end
     return false
 end
 
-assert(contains_menu_text(menu_items.readeck.sub_item_table, "Highlights"), "Highlights submenu is missing")
-assert(contains_menu_text(menu_items.readeck.sub_item_table, "Periodic sync"), "Periodic sync submenu is missing")
-assert(contains_menu_text(menu_items.readeck.sub_item_table, "Configure Readeck client"), "client settings are missing")
+local readeck_items = menu_items.readeck.sub_item_table_func()
+assert(contains_menu_text(readeck_items, "Highlights"), "Highlights submenu is missing")
+assert(contains_menu_text(readeck_items, "Periodic sync (beta)"), "Periodic sync submenu is missing")
+assert(contains_menu_text(readeck_items, "Configure Readeck client"), "client settings are missing")
 
 print("KOReader runtime smoke passed")

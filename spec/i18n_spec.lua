@@ -13,12 +13,30 @@ local function settings(language)
 end
 
 describe("readeck.i18n", function()
+    after_each(function()
+        I18n.set_language_override("")
+    end)
+
     it("defaults to English", function()
         assert.are.equal("Readeck sync", I18n.translate("Readeck sync", nil, settings("en_US")))
     end)
 
     it("uses Chinese supplement for Chinese KOReader language", function()
         assert.are.equal("Readeck 同步", I18n.translate("Readeck sync", nil, settings("zh_CN")))
+    end)
+
+    it("can override the KOReader language", function()
+        I18n.set_language_override("zh-cn")
+        assert.are.equal("Readeck 同步", I18n.translate("Readeck sync", nil, settings("en_US")))
+
+        I18n.set_language_override("en")
+        assert.are.equal("Readeck sync", I18n.translate("Readeck sync", nil, settings("zh_CN")))
+        assert.are.equal(
+            "Cancel",
+            I18n.translate("Cancel", function()
+                return "取消"
+            end, settings("zh_CN"))
+        )
     end)
 
     it("prefers KOReader gettext when it already has a translation", function()
@@ -61,8 +79,20 @@ describe("readeck.i18n", function()
             I18n.translate("Sync reading progress to Readeck", nil, settings("zh_CN"))
         )
         assert.are.equal(
+            "同步阅读进度到 Readeck（Beta）",
+            I18n.translate("Sync reading progress to Readeck (beta)", nil, settings("zh_CN"))
+        )
+        assert.are.equal(
             "已同步阅读进度：%1",
             I18n.translate("Reading progress synced: %1", nil, settings("zh_CN"))
         )
+        assert.are.equal("已导入高亮：%1", I18n.translate("Highlights imported: %1", nil, settings("zh_CN")))
+        assert.are.equal("已导出高亮：%1", I18n.translate("Highlights exported: %1", nil, settings("zh_CN")))
+        assert.are.equal(
+            "同步当前文章高亮",
+            I18n.translate("Sync current article highlights", nil, settings("zh_CN"))
+        )
+        assert.are.equal("简体中文", I18n.translate("Simplified Chinese", nil, settings("zh_CN")))
+        assert.are.equal("星级阈值", I18n.translate("Star rating threshold", nil, settings("zh_CN")))
     end)
 end)

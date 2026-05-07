@@ -1,8 +1,8 @@
 package.path = "./readeck.koplugin/?.lua;" .. package.path
 
-local Api = require("readeck.api")
+local Api = require("readeck.net.api")
 
-describe("readeck.api", function()
+describe("readeck.net.api", function()
     it("builds bookmark list URLs", function()
         assert.are.equal(
             "/api/bookmarks?limit=30&offset=0&is_archived=0&type=article&labels=research%20notes&sort=-created",

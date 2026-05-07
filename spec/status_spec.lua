@@ -1,8 +1,8 @@
 package.path = "./readeck.koplugin/?.lua;" .. package.path
 
-local Status = require("readeck.status")
+local Status = require("readeck.sync.status")
 
-describe("readeck.status", function()
+describe("readeck.sync.status", function()
     it("adds action counters", function()
         local counts = Status.new_counts({ remote_archived = 1 })
         Status.add(counts, { remote_archived = 2, local_removed = 3 })
@@ -11,6 +11,9 @@ describe("readeck.status", function()
         assert.are.equal(3, counts.local_removed)
         assert.are.equal(0, counts.remote_deleted)
         assert.are.equal(0, counts.remote_progress_updated)
+        assert.are.equal(0, counts.local_progress_updated)
+        assert.are.equal(0, counts.highlights_imported)
+        assert.are.equal(0, counts.highlights_exported)
     end)
 
     it("merges processed article ID sets", function()

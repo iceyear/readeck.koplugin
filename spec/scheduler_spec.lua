@@ -1,8 +1,8 @@
 package.path = "./readeck.koplugin/?.lua;" .. package.path
 
-local Scheduler = require("readeck.scheduler")
+local Scheduler = require("readeck.sync.scheduler")
 
-describe("readeck.scheduler", function()
+describe("readeck.sync.scheduler", function()
     it("limits asynchronous work to the configured concurrency", function()
         local scheduled = {}
         local running = 0

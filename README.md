@@ -40,9 +40,10 @@ This is a cozy project, and I hope it can remain one — with the community’s 
 * 🌐 **Add to Readeck (with Queue)**: Add links from KOReader; if offline, links are stored in a queue and retried next time you’re online.
 * 📝 **Review → Tags**: Write comma-separated tags in the **Review** field and send them back to Readeck as labels.
 * ⭐ **Star / Like Sync**: Optionally mark entries as liked on Readeck based on your KOReader star rating threshold, and/or label entries with their star rating (e.g. `3-star`).
-* 🖍️ **Highlight Export**: Export KOReader highlights and notes to Readeck annotations, manually, before sync, and/or when closing a document.
+* 📊 **Reading Progress Sync (beta)**: Sync KOReader reading progress below 100% back to Readeck, and apply newer incomplete Readeck progress to local sidecars. Disabled by default.
+* 🖍️ **Highlight Sync**: Merge Readeck annotations into KOReader highlights and export local KOReader highlights, notes, and mapped colors back to Readeck. The plugin reads `/api/info` and adapts newer annotation fields to the Readeck server version.
 * 🕒 **Metadata Sync**: Set downloaded file timestamps from Readeck metadata and add estimated reading time as a KOReader keyword.
-* 🔁 **Periodic Sync**: Optionally let KOReader schedule recurring Readeck syncs while the app is running.
+* 🔁 **Periodic Sync (beta)**: Optionally let KOReader schedule recurring Readeck syncs while the app is running.
 * ⚡ **Cooperative Downloads**: Download articles through a bounded async queue. Concurrency is configurable from 1 to 3 so slower devices can stay responsive.
 * 🌍 **Plugin i18n Fallbacks**: Reuse KOReader gettext when available, then fall back to plugin-provided English/Chinese strings.
 
@@ -53,11 +54,13 @@ This is a cozy project, and I hope it can remain one — with the community’s 
 3. Copy the `readeck.koplugin` folder into the plugins directory.
 4. Restart KOReader completely (use **Exit** from the menu, then relaunch).
 
+> **Compatibility warning:** The refactored plugin settings are not fully compatible with very old experimental builds. If you upgrade from an early version and see odd sync or authentication behavior, clear the old `readeck.lua` plugin settings and configure the plugin again before filing a bug.
+
 ## ⚙️ Configuration
 
 To use this plugin, you need:
 
-1. A running Readeck server (learn more at [readeck.org](https://www.readeck.org))
+1. A running Readeck server (learn more at [readeck.org](https://readeck.org))
 2. A dedicated download folder configured on your KOReader
 
 ### Initial Setup
@@ -91,7 +94,7 @@ When you finish reading an article:
 
 1. Mark it as finished (e.g., set status to **complete**) and/or read it to **100%**
 2. Go to **Main Menu > Readeck > Process finished/read articles**
-3. The plugin will apply your configured completion action, export highlights first, and remove local files only after Readeck confirms the action
+3. The plugin will apply your configured completion action, sync highlights first, and remove local files only after Readeck confirms the action
 
 ### Adding Articles
 
@@ -105,11 +108,15 @@ If you are offline:
 1. The link will be added to a **download queue**
 2. It will be retried automatically the next time you’re online (during sync)
 
-### Exporting Highlights
+### Syncing Highlights
 
 1. Open a downloaded Readeck article in KOReader
-2. Go to **Main Menu > Readeck > Export highlights to server**
-3. Highlights and notes will be uploaded to Readeck as annotations (duplicates are skipped if they overlap)
+2. Go to **Main Menu > Readeck > Sync current article highlights**
+3. Readeck annotations are imported into KOReader highlights, and local KOReader highlights with supported notes/colors are uploaded to Readeck as annotations. Duplicates are skipped if they overlap.
+
+### Syncing Reading Progress
+
+During sync, the plugin can send KOReader's local reading progress below 100% back to Readeck without archiving the article. It also applies newer incomplete Readeck `read_progress` values to KOReader sidecars when articles are downloaded or skipped because they already exist locally. Articles that are being processed by completion actions are handled by the archive/delete flow instead.
 
 ## ⚠️ Notes
 
@@ -125,6 +132,7 @@ If you are offline:
 * **Process 100% read articles in Readeck**: Process entries that reached 100% progress
 * **Archive completion actions instead of deleting**: Archive entries instead of permanently deleting them
 * **Process completion actions when syncing**: Run completion actions automatically during sync
+* **Sync reading progress to Readeck (beta)**: Update Readeck's reading progress below 100% for local articles that remain on the device, and accept newer incomplete Readeck progress locally
 * **Remove local files missing from Readeck**: Remove local files that no longer exist on the server
 
 ### Tag Settings
@@ -138,7 +146,8 @@ If you are offline:
 * **Sort articles by**: Choose the server-side ordering (added/published/duration/site/title)
 * **Number of articles to download per sync**: Limit how many entries are processed per sync run
 * **Concurrent downloads**: Choose how many article downloads run at once. Use `1` for the safest behavior on very slow devices, or `2-3` when the device and server can handle it.
-* **Periodic sync**: Enable a KOReader timer and choose the interval in minutes
+* **Periodic sync (beta)**: Enable a KOReader timer and choose the interval in minutes
+* **Language**: Follow KOReader's language, or force the plugin UI to English / Simplified Chinese
 
 ### Star / Like Sync
 

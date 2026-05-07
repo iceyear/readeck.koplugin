@@ -1,8 +1,8 @@
 package.path = "./readeck.koplugin/?.lua;" .. package.path
 
-local Dates = require("readeck.dates")
+local Dates = require("readeck.core.dates")
 
-describe("readeck.dates", function()
+describe("readeck.core.dates", function()
     it("parses UTC timestamps", function()
         assert.are.equal(1704067200, Dates.parse("2024-01-01T00:00:00Z"))
     end)

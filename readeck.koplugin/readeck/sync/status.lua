@@ -5,6 +5,11 @@ function Status.new_counts(initial)
         remote_archived = 0,
         remote_deleted = 0,
         remote_progress_updated = 0,
+        local_progress_updated = 0,
+        highlights_imported = 0,
+        highlights_exported = 0,
+        highlights_skipped = 0,
+        highlights_failed = 0,
         local_removed = 0,
         failed = 0,
     }

@@ -1,8 +1,8 @@
 package.path = "./readeck.koplugin/?.lua;" .. package.path
 
-local Metadata = require("readeck.metadata")
+local Metadata = require("readeck.storage.metadata")
 
-describe("readeck.metadata", function()
+describe("readeck.storage.metadata", function()
     it("formats reading time keywords", function()
         assert.are.equal("Reading time: 7 min", Metadata.reading_time_keyword(6.6))
     end)
