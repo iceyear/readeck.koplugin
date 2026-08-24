@@ -117,7 +117,50 @@ assert(counts.updated_remote == 1, "linked local highlight update was not patche
 assert(counts.remote_deleted == 1, "remote deletion policy was not applied")
 assert(local_annotations[1].readeck_annotation_id == "created-1", "exported annotation id was not retained")
 
+-- The baseline cursor a first-ever catalog refresh sends has to be one the server will
+-- actually bind. The mock rejects anything else exactly as Readeck does, so this asserts
+-- the real round trip rather than the constant's spelling.
+local Refresh = require("readeck.browse.refresh")
+local sync_log, sync_err, sync_code = instance:fetchSyncLog(Refresh.BASELINE_CURSOR)
+assert(sync_code == 200, "baseline sync request was rejected: " .. tostring(sync_code) .. " " .. tostring(sync_err))
+assert(type(sync_log) == "table" and sync_log[1] and sync_log[1].id == article_id, "baseline sync log was empty")
+
+-- Collections, through the real JSON decoder. Readeck sends `null` for a filter it does not
+-- constrain, and KOReader decodes null to a sentinel *function* rather than nil -- so this
+-- is the only layer that can catch the class of bug that emptied every collection. The
+-- busted specs stub the decoder and cannot see it.
+local Catalog = require("readeck.browse.catalog")
+local Facets = require("readeck.browse.facets")
+local catalog = Catalog.empty()
+assert(instance:refreshCollections(catalog) == 2, "collections were not fetched")
+
+local unrestricted = catalog.collections[1]
+assert(unrestricted.name == "Everything", "collection name did not survive decoding")
+assert(unrestricted.filters.is_archived == nil, "a null filter flag must decode to nil, not to a sentinel")
+assert(unrestricted.filters.is_marked == nil, "a null filter flag must decode to nil, not to a sentinel")
+
+local library = { Catalog.entry_from_bookmark({ id = article_id, title = "Probe", labels = { "rust" } }) }
+local filter = Facets.collection_filter(unrestricted)
+assert(Facets.count(library, filter) == 1, "an unrestricted collection matched nothing")
+
+-- The second collection carries a real flag and a quoted multi-word label, so this also
+-- pins that a set filter still narrows and that the label expression is parsed, not split.
+local restricted = catalog.collections[2]
+assert(restricted.filters.is_archived == true, "a set filter flag was lost")
+assert(
+    restricted.filters.labels[1] == "long read" and restricted.filters.labels[2] == "rust",
+    "the collection label expression was not parsed back into names"
+)
+
+-- Nothing the decoder produced may reach the settings file: dump.lua writes a function as
+-- `function: 0x...`, which is not loadable Lua, and LuaSettings then silently falls back to
+-- the .old backup.
+local dump = require("dump")
+assert(not dump(catalog):find("function:", 1, true), "the catalog holds a value that cannot be serialised")
+
 local state = instance:callAPI("GET", server_url .. "/__state", {}, "", "", true)
+assert(#state.sync_rejections == 0, "the server refused a sync cursor the plugin sent")
+assert(state.sync_requests[1] == Refresh.BASELINE_CURSOR, "baseline sync did not send the epoch cursor")
 assert(state and state.oauth_token_requests == 1, "mock OAuth token endpoint was not hit")
 assert(#state.oauth_clients == 1, "unexpected number of OAuth client registration requests")
 assert(

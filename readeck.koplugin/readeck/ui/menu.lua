@@ -47,12 +47,19 @@ function Menu.install(Readeck, deps)
             sub_item_table_func = function()
                 local items = {
                     {
+                        text = L("Browse articles"),
+                        callback = function()
+                            self:showBrowser()
+                        end,
+                    },
+                    {
                         text = L("Synchronize articles with server"),
                         callback = function()
                             self.ui:handleEvent(Event:new("SynchronizeReadeck"))
                         end,
                     },
                     {
+                        id = "sync_highlights",
                         text = L("Sync current article highlights"),
                         callback = function()
                             NetworkMgr:runWhenOnline(function()
@@ -136,7 +143,14 @@ Downloads to folder: %1]]
                     },
                 }
                 if not is_current_document_readeck_article(self) then
-                    table.remove(items, 2)
+                    -- Removed by id, not by position: the entries above it shift whenever the
+                    -- menu gains an item, and an index here silently deletes the wrong one.
+                    for index, item in ipairs(items) do
+                        if item.id == "sync_highlights" then
+                            table.remove(items, index)
+                            break
+                        end
+                    end
                 end
                 if Readeck.hasActiveDownloadProgress(self) then
                     table.insert(items, 2, {

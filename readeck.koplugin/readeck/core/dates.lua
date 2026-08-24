@@ -74,6 +74,41 @@ function Dates.parse(value, dateparser)
     return nil
 end
 
+-- Formats an epoch timestamp as strict RFC3339 in UTC with a trailing "Z".
+--
+-- That exact form matters for the Readeck sync cursor: a "+HH:MM" offset in a query
+-- string is decoded server-side as a space, which makes the whole request a 422.
+function Dates.to_rfc3339(timestamp)
+    timestamp = tonumber(timestamp)
+    if timestamp == nil then
+        return nil
+    end
+    return os.date("!%Y-%m-%dT%H:%M:%SZ", math.floor(timestamp))
+end
+
+-- Hours between an RFC3339 timestamp and now, or nil when it cannot be parsed. Used to
+-- decide whether the catalog is stale enough to say so in the browser subtitle.
+function Dates.age_in_hours(value, now)
+    local timestamp = Dates.parse(value)
+    if timestamp == nil then
+        return nil
+    end
+    return ((now or os.time()) - timestamp) / 3600
+end
+
+-- Coarse, translatable age. Deliberately not minute-accurate: the only question the
+-- browser asks is "is this list old enough that I should refresh before trusting it".
+function Dates.humanize_age(hours, L, T)
+    hours = tonumber(hours) or 0
+    if hours >= 48 then
+        return T(L("%1 days ago"), math.floor(hours / 24))
+    end
+    if hours >= 1 then
+        return T(L("%1 hours ago"), math.floor(hours))
+    end
+    return L("just now")
+end
+
 function Dates.article_timestamp(article, dateparser)
     if type(article) ~= "table" then
         return nil

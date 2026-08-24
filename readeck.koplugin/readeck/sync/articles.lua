@@ -1,10 +1,10 @@
 local Api = require("readeck.net.api")
+local Filters = require("readeck.core.filters")
 local InfoMessage = require("ui/widget/infomessage")
 local JSON = require("json")
 local ProgressMessage = require("readeck.ui.progress_message")
 local Status = require("readeck.sync.status")
 local UIManager = require("ui/uimanager")
-local util = require("util")
 
 local Articles = {}
 
@@ -47,7 +47,7 @@ function Articles.install(Readeck, deps)
                 offset = offset,
                 is_archived = 0,
                 type = "article",
-                labels = self.filter_tag,
+                labels = Filters.parse_label_list(self.filter_tag),
                 sort = self.sort_param,
             })
 
@@ -152,7 +152,7 @@ function Articles.install(Readeck, deps)
                 offset = state.offset,
                 is_archived = 0,
                 type = "article",
-                labels = self.filter_tag,
+                labels = Filters.parse_label_list(self.filter_tag),
                 sort = self.sort_param,
             })
 
@@ -247,25 +247,18 @@ function Articles.install(Readeck, deps)
         return true
     end
 
+    -- Shares readeck.core.filters with the browser, so the list shown and the list
+    -- downloaded agree on what the exclude setting means -- including the trimming, which
+    -- this used to skip: "work, later" ignored `work` and a label named ` later`.
     function Readeck:filterIgnoredTags(article_list)
-        local ignoring = {}
-        if self.ignore_tags ~= "" then
-            for tag in util.gsplit(self.ignore_tags, "[,]+", false) do
-                ignoring[tag] = true
-            end
-        end
+        local rules = Filters.rules_from(self)
 
         local filtered_list = {}
         for _, article in ipairs(article_list) do
-            local skip_article = false
-            for _, tag in ipairs(article.labels or {}) do
-                if ignoring[tag] then
-                    skip_article = true
-                    Log:debug("Ignoring tag", tag, "in article", article.id, ":", article.title)
-                    break
-                end
-            end
-            if not skip_article then
+            local ignored = Filters.excluded_label(article, rules)
+            if ignored then
+                Log:debug("Ignoring tag", ignored, "in article", article.id, ":", article.title)
+            else
                 table.insert(filtered_list, article)
             end
         end
@@ -372,6 +365,10 @@ function Articles.install(Readeck, deps)
                     }))
                     self.sync_in_progress = false
                     self:refreshCurrentDirIfNeeded()
+                    -- The network is up and the token is fresh right now; folding the
+                    -- catalog delta in here is what keeps the browser current without
+                    -- ever making the user wait for a second round trip.
+                    self:refreshCatalogAfterSync()
                 end,
             })
         end)

@@ -93,6 +93,7 @@ local function install_koreader_stubs()
             abbreviate = function(path)
                 return path
             end,
+            openFile = function() end,
         }
     end
     package.preload["ui/widget/infomessage"] = function()
@@ -146,8 +147,67 @@ local function install_koreader_stubs()
             isOnline = function()
                 return true
             end,
-            runWhenOnline = function(callback)
+            isConnected = function()
+                return true
+            end,
+            -- Both are called colon-style everywhere in the plugin, so the stub has to
+            -- take self; without it the callback lands in the self slot and is never run.
+            runWhenOnline = function(_, callback)
                 callback()
+            end,
+            runWhenConnected = function(_, callback)
+                callback()
+            end,
+        }
+    end
+    package.preload["ui/widget/booklist"] = function()
+        local BookList = {
+            book_info_cache = {},
+            extend = function(parent, class)
+                class = class or {}
+                for key, value in pairs(parent) do
+                    if class[key] == nil then
+                        class[key] = value
+                    end
+                end
+                class.new = function(cls, options)
+                    local instance = options or {}
+                    for key, value in pairs(cls) do
+                        if instance[key] == nil then
+                            instance[key] = value
+                        end
+                    end
+                    if instance.init then
+                        instance:init()
+                    end
+                    return instance
+                end
+                return class
+            end,
+            init = function() end,
+            getBookInfo = function()
+                return { been_opened = false }
+            end,
+            resetBookInfoCache = function() end,
+            switchItemTable = function() end,
+            updateItems = function() end,
+        }
+        return BookList
+    end
+    package.preload["ui/trapper"] = function()
+        return {
+            wrap = function(_, task)
+                task()
+            end,
+            isWrapped = function()
+                return true
+            end,
+            info = function()
+                return true
+            end,
+            clear = function() end,
+            confirm = function()
+                return false
             end,
         }
     end
@@ -161,6 +221,9 @@ local function install_koreader_stubs()
             show = function() end,
             close = function() end,
             forceRePaint = function() end,
+            nextTick = function(_, callback)
+                callback()
+            end,
             scheduleIn = function(_, delay_or_callback, maybe_callback)
                 local callback = maybe_callback or delay_or_callback
                 callback()
@@ -2333,5 +2396,310 @@ describe("KOReader smoke", function()
 
         assert.are.equal(1, #articles)
         assert.are.equal("def456", articles[1].id)
+    end)
+
+    describe("full catalog refresh", function()
+        local function refresh_instance(responses)
+            package.path = "./readeck.koplugin/?.lua;" .. package.path
+            install_koreader_stubs()
+            local Catalog = dofile("readeck.koplugin/readeck/browse/catalog.lua")
+            local Readeck = dofile("readeck.koplugin/main.lua")
+            local calls = {}
+            local instance = setmetatable({
+                catalog = Catalog.empty(),
+                access_token = "token",
+                saved_synced_at = false,
+                callAPI = function(_, method, url)
+                    table.insert(calls, url)
+                    return responses(method, url)
+                end,
+                saveCatalog = function(plugin, synced_at)
+                    plugin.saved_synced_at = synced_at
+                    return true
+                end,
+                refreshCollections = function()
+                    return 0
+                end,
+            }, { __index = Readeck })
+            return instance, calls
+        end
+
+        it("still rebuilds when the server refuses the baseline sync cursor", function()
+            local instance, calls = refresh_instance(function(_, url)
+                if url:find("/sync", 1, true) then
+                    return nil, "Unprocessable Entity", 422
+                end
+                if url:find("offset=0", 1, true) then
+                    return { { id = "abc123", title = "Paged article" } }, nil, 200, {}
+                end
+                return {}, nil, 200, {}
+            end)
+
+            assert.is_true(instance:refreshCatalogFull())
+            assert.are.equal("Paged article", instance.catalog.entries.abc123.title)
+            assert.is_string(instance.saved_synced_at)
+            assert.is_truthy(calls[1]:find("/sync", 1, true))
+        end)
+
+        it("does not prune from a census it never received", function()
+            local instance = refresh_instance(function(_, url)
+                if url:find("/sync", 1, true) then
+                    return nil, "Unprocessable Entity", 422
+                end
+                return {}, nil, 200, {}
+            end)
+            instance.catalog.entries.older = { id = "older", title = "Already known" }
+
+            assert.is_true(instance:refreshCatalogFull())
+            assert.is_not_nil(instance.catalog.entries.older)
+        end)
+
+        it("reports failure and leaves the sync stamp alone when paging breaks", function()
+            local instance = refresh_instance(function(_, url)
+                if url:find("/sync", 1, true) then
+                    return nil, "Unprocessable Entity", 422
+                end
+                return nil, "connection refused", nil
+            end)
+
+            assert.is_false(instance:refreshCatalogFull())
+            assert.is_false(instance.saved_synced_at)
+        end)
+    end)
+
+    describe("browser article activation", function()
+        -- Builds one ArticleBrowser against the stubs, with just the state the two
+        -- activation paths read. `plugin.download` records the call and pretends the
+        -- article landed at the path findLocalArticlePathByID then reports.
+        local function browser(opts)
+            opts = opts or {}
+            package.path = "./readeck.koplugin/?.lua;" .. package.path
+            install_koreader_stubs()
+            local opened = {}
+            -- install_koreader_stubs only clears readeck.* from package.loaded, so a
+            -- UIManager required by an earlier test would be reused here -- and the
+            -- earlier ones have no nextTick.
+            package.loaded["ui/uimanager"] = nil
+            package.loaded["apps/filemanager/filemanagerutil"] = nil
+            package.preload["apps/filemanager/filemanagerutil"] = function()
+                return {
+                    abbreviate = function(path)
+                        return path
+                    end,
+                    openFile = function(_, file)
+                        table.insert(opened, file)
+                    end,
+                }
+            end
+
+            local Readeck = dofile("readeck.koplugin/main.lua")
+            local Browser = require("readeck.ui.browser")
+            local downloads = {}
+            local plugin = setmetatable({
+                directory = "/tmp/readeck",
+                download = function(_, article)
+                    table.insert(downloads, article.id)
+                    return "downloaded"
+                end,
+                findLocalArticlePathByID = function(_, id)
+                    if opts.missing_after_download then
+                        return nil
+                    end
+                    return "/tmp/readeck/article [" .. id .. "].epub"
+                end,
+            }, { __index = Readeck })
+
+            local instance = setmetatable({
+                plugin = plugin,
+                ctx = { downloaded = opts.downloaded or {} },
+                item_table = {},
+                refreshed = 0,
+            }, { __index = Browser.ArticleBrowserClass })
+            instance.refreshRow = function(self)
+                self.refreshed = self.refreshed + 1
+            end
+            return instance, downloads, opened
+        end
+
+        local function row()
+            return { kind = "article", idx = 1, entry = { id = "abc123", title = "An article" } }
+        end
+
+        it("opens an already downloaded article without downloading it again", function()
+            local instance, downloads, opened =
+                browser({ downloaded = { abc123 = "/tmp/readeck/article [abc123].epub" } })
+
+            instance:openOrDownload(row())
+
+            assert.are.same({}, downloads)
+            assert.are.same({ "/tmp/readeck/article [abc123].epub" }, opened)
+        end)
+
+        it("downloads and then opens, so one tap is enough", function()
+            local instance, downloads, opened = browser()
+
+            instance:openOrDownload(row())
+
+            assert.are.same({ "abc123" }, downloads)
+            assert.are.same({ "/tmp/readeck/article [abc123].epub" }, opened)
+            -- The browser is closing behind the reader, so it must not repaint on the way.
+            assert.are.equal(0, instance.refreshed)
+        end)
+
+        it("stays on the list for the long-press download action", function()
+            local instance, downloads, opened = browser()
+
+            instance:openOrDownload(row(), true)
+
+            assert.are.same({ "abc123" }, downloads)
+            assert.are.same({}, opened)
+            assert.are.equal(1, instance.refreshed)
+            assert.are.equal("/tmp/readeck/article [abc123].epub", instance.ctx.downloaded.abc123)
+        end)
+
+        it("does not try to open anything when the downloaded file cannot be found", function()
+            local instance, downloads, opened = browser({ missing_after_download = true })
+
+            instance:openOrDownload(row())
+
+            assert.are.same({ "abc123" }, downloads)
+            assert.are.same({}, opened)
+        end)
+    end)
+
+    describe("sync tag exclusions", function()
+        local function sync_instance(overrides)
+            package.path = "./readeck.koplugin/?.lua;" .. package.path
+            install_koreader_stubs()
+            local Readeck = dofile("readeck.koplugin/main.lua")
+            return setmetatable(overrides or {}, { __index = Readeck })
+        end
+
+        local function ids(list)
+            local result = {}
+            for _, article in ipairs(list) do
+                table.insert(result, article.id)
+            end
+            return result
+        end
+
+        it("drops articles carrying an ignored tag", function()
+            local instance = sync_instance({ ignore_tags = "spam,ads" })
+            local kept = instance:filterIgnoredTags({
+                { id = "1", title = "keep", labels = { "news" } },
+                { id = "2", title = "drop", labels = { "news", "ads" } },
+                { id = "3", title = "keep", labels = {} },
+            })
+            assert.are.same({ "1", "3" }, ids(kept))
+        end)
+
+        it("trims the ignore list, so a space after the comma still matches", function()
+            local instance = sync_instance({ ignore_tags = "spam, ads" })
+            local kept = instance:filterIgnoredTags({
+                { id = "1", title = "drop", labels = { "ads" } },
+                { id = "2", title = "keep", labels = { "news" } },
+            })
+            assert.are.same({ "2" }, ids(kept))
+        end)
+
+        it("keeps everything when nothing is ignored", function()
+            local instance = sync_instance({ ignore_tags = "" })
+            local kept = instance:filterIgnoredTags({
+                { id = "1", labels = { "news" } },
+                { id = "2", labels = { "ads" } },
+            })
+            assert.are.same({ "1", "2" }, ids(kept))
+        end)
+    end)
+
+    describe("browse catalog write-through", function()
+        local function loaded_instance()
+            package.path = "./readeck.koplugin/?.lua;" .. package.path
+            install_koreader_stubs()
+            local Catalog = dofile("readeck.koplugin/readeck/browse/catalog.lua")
+            local Readeck = dofile("readeck.koplugin/main.lua")
+            local catalog = Catalog.empty()
+            Catalog.upsert(catalog, {
+                id = "abc123",
+                title = "An article",
+                labels = { "python" },
+                is_archived = false,
+                is_marked = false,
+                read_progress = 10,
+            })
+            return setmetatable({ catalog = catalog }, { __index = Readeck }), catalog
+        end
+
+        it("does nothing at all while no catalog is in memory", function()
+            package.path = "./readeck.koplugin/?.lua;" .. package.path
+            install_koreader_stubs()
+            local Readeck = dofile("readeck.koplugin/main.lua")
+            local instance = setmetatable({}, { __index = Readeck })
+
+            assert.is_false(instance:catalogPatch("abc123", { is_archived = true }))
+            assert.is_false(instance:catalogRemove("abc123"))
+            assert.is_false(instance:catalogUpsertBookmark({ id = "abc123" }))
+            assert.is_false(instance:catalogAddLabels("abc123", { "python" }))
+            assert.is_nil(instance.catalog)
+            assert.is_nil(instance.catalog_dirty)
+        end)
+
+        it("applies an archive PATCH body field by field", function()
+            local instance, catalog = loaded_instance()
+
+            assert.is_true(instance:catalogApplyArchive("abc123", {
+                is_archived = true,
+                read_progress = 100,
+                is_marked = true,
+                add_labels = { "done" },
+            }))
+
+            local entry = catalog.entries.abc123
+            assert.is_true(entry.is_archived)
+            assert.are.equal(100, entry.read_progress)
+            assert.is_true(entry.is_marked)
+            assert.are.same({ "python", "done" }, entry.labels)
+            assert.is_true(instance.catalog_dirty)
+        end)
+
+        it("unions labels instead of replacing them, and never duplicates one", function()
+            local instance, catalog = loaded_instance()
+
+            assert.is_true(instance:catalogAddLabels("abc123", { "python", "rust" }))
+
+            assert.are.same({ "python", "rust" }, catalog.entries.abc123.labels)
+        end)
+
+        it("refreshes an entry from a downloaded article payload", function()
+            local instance, catalog = loaded_instance()
+
+            assert.is_true(instance:catalogUpsertBookmark({
+                id = "abc123",
+                title = "Renamed upstream",
+                labels = { "rust" },
+                read_progress = 55,
+            }))
+
+            local entry = catalog.entries.abc123
+            assert.are.equal("Renamed upstream", entry.title)
+            assert.are.same({ "rust" }, entry.labels)
+            assert.are.equal(55, entry.read_progress)
+        end)
+
+        it("drops an article that was deleted on the server", function()
+            local instance, catalog = loaded_instance()
+
+            assert.is_true(instance:catalogRemove("abc123"))
+            assert.is_nil(catalog.entries.abc123)
+            assert.is_false(instance:catalogRemove("abc123"))
+        end)
+
+        it("ignores a mutation for an article the catalog has never seen", function()
+            local instance = loaded_instance()
+
+            assert.is_false(instance:catalogPatch("missing", { is_archived = true }))
+            assert.is_false(instance:catalogAddLabels("missing", { "python" }))
+            assert.is_nil(instance.catalog_dirty)
+        end)
     end)
 end)

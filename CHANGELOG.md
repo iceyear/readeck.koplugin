@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased
+
+### English
+
+#### Added
+
+- Added an article browser, reachable from **Readeck sync → Browse articles**, that lists everything in your Readeck account without downloading it. Rows not yet on the device are marked with a cloud icon; tapping one downloads just that article.
+- Added seven browsing buckets: all, unread, archived, favorite, collections, by label, and by source.
+- Added label drill-down. Each label you pick narrows the list, and the remaining labels are re-counted and re-ordered against only the articles that still match, so a label that would return nothing is never offered. The back arrow deselects one label at a time.
+- Added a source picker listing every site in your account with its article count.
+- Added Readeck collections to the browser. A collection whose server-side filter includes a full-text search is prefixed with `~` and counted on its other filters only, because the device has no article text to search.
+- Added an on-device search over titles, authors, sources, and labels.
+- Added browser sorting: newest, oldest, title, source, longest read, shortest read, and most read.
+- Added long-press actions on an article: open, download, add to or remove from favorites, archive or move to unread, delete the local file, and article details.
+- Added a local article catalog so the browser works fully offline. It is fetched once, kept up to date with a delta request at the end of each normal sync, and refreshed or rebuilt on demand from the browser menu.
+- Added a degraded offline fallback that reconstructs a browsable list from downloaded files and their KOReader metadata when no catalog exists yet.
+- The browser now hides what a sync would skip: video bookmarks, articles missing the **Only download articles with tag** label, and articles carrying a tag from **Tags to ignore**. The subtitle reports how many are hidden, and **Hide what sync skips** in the browser menu turns it off when you want to reach one of them.
+
+#### Changed
+
+- Reading progress from the device is now merged with the server's when deciding whether an article counts as unread, so an article finished in KOReader but not yet synced no longer shows up as unread in the browser.
+- Article list requests can now express repeated and quoted filter parameters, which is what makes multi-word labels and multi-value filters work.
+- Tapping an article in the browser that is not on the device yet now downloads **and** opens it. It used to stop at the list once the download finished, so reading an article took two taps. Long-press → **Download** still downloads without leaving the list.
+- **Tags to ignore** now trims spaces around each tag, so `work, later` ignores `later` instead of a tag literally named ` later`.
+- **Only download articles with tag** is now sent to the server as a quoted term, so a multi-word tag matches that tag instead of being split into two separate requirements.
+
+#### Fixed
+
+- Fixed every collection in the browser showing zero articles. Readeck sends `null` for a filter a collection does not restrict, and KOReader's JSON decoder represents `null` as a value that is neither `nil` nor a boolean, so the "is it archived?" and "is it a favorite?" tests rejected every article. An unset filter is now correctly read as "no restriction".
+- Fixed a collection's label filter being ignored. Readeck stores it as a search expression rather than a list, and multi-word labels are quoted, so it is now parsed with the same syntax the plugin already uses to send label filters.
+- Fixed the catalog file being written with an unreadable value, which made KOReader silently fall back to the previous backup. Collections stored by an earlier build are repaired the next time the browser opens, with no re-sync needed.
+
+### 中文
+
+#### 新增
+
+- 新增文章浏览器，可从 **Readeck 同步 → 浏览文章** 进入，无需下载即可列出 Readeck 账户中的全部文章。尚未下载到设备的条目会标有云图标，轻点即可仅下载该篇文章。
+- 新增七个浏览分类：全部、未读、已归档、收藏、收藏集、按标签、按来源。
+- 新增标签逐层筛选。每选中一个标签都会缩小列表范围，剩余标签会仅针对仍然匹配的文章重新计数和排序，因此不会出现选中后结果为空的标签。返回键每次取消一个标签。
+- 新增来源选择器，列出账户中的所有站点及其文章数量。
+- 新增 Readeck 收藏集浏览。若某个收藏集的服务器端筛选包含全文搜索，其名称会加上 `~` 前缀，并且仅按其他筛选条件计数，因为设备上没有文章正文可供搜索。
+- 新增设备端搜索，可搜索标题、作者、来源和标签。
+- 新增浏览排序：最新、最早、标题、来源、阅读时长最长、阅读时长最短、阅读最多。
+- 新增文章长按操作：打开、下载、加入或取消收藏、归档或标为未读、删除本地文件、查看文章详情。
+- 新增本地文章目录，使浏览器可完全离线使用。目录仅获取一次，随后在每次常规同步结束时通过增量请求保持更新，也可从浏览器菜单手动刷新或重建。
+- 新增离线降级方案：在尚无目录时，根据已下载文件及其 KOReader 元数据重建可浏览的列表。
+- 浏览器现在会隐藏同步会跳过的内容：视频书签、缺少**仅下载带此标签的文章**所指标签的文章，以及带有**要忽略的标签**中任一标签的文章。副标题会显示隐藏了多少篇；如需查看其中某篇，可在浏览器菜单中关闭**隐藏同步跳过的内容**。
+
+#### 变更
+
+- 判断文章是否未读时，现在会将设备上的阅读进度与服务器进度合并，因此在 KOReader 中已读完但尚未同步的文章不会再显示为未读。
+- 文章列表请求现在支持重复参数和带引号的筛选参数，这也是多词标签和多值筛选得以生效的基础。
+- 在浏览器中轻点尚未下载的文章，现在会下载**并**打开该文章。此前下载完成后会停留在列表，导致阅读一篇文章需要点两次。长按 → **下载** 仍然只下载而不离开列表。
+- **要忽略的标签**现在会去除每个标签前后的空格，因此 `work, later` 会忽略 `later`，而不是一个名为 ` later` 的标签。
+- **仅下载带此标签的文章**现在以带引号的词条发送给服务器，因此多词标签会作为整体匹配，而不再被拆成两个独立条件。
+
+#### 修复
+
+- 修复浏览器中所有收藏集都显示 0 篇文章的问题。收藏集未限制的筛选项，Readeck 会返回 `null`，而 KOReader 的 JSON 解码结果既不是 `nil` 也不是布尔值，导致“是否已归档”和“是否已收藏”的判断否决了每一篇文章。现在未设置的筛选项会被正确理解为“不做限制”。
+- 修复收藏集的标签筛选被忽略的问题。Readeck 将其存储为搜索表达式而非列表，且多词标签带引号，现在会使用插件发送标签筛选时的同一套语法进行解析。
+- 修复目录文件写入了无法读取的值，导致 KOReader 静默回退到上一个备份的问题。由旧版本写入的收藏集会在下次打开浏览器时自动修复，无需重新同步。
+
 ## v0.1.1 - 2026-05-07
 
 Source: https://github.com/iceyear/readeck.koplugin  
