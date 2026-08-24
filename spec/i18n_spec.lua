@@ -122,4 +122,51 @@ describe("readeck.i18n", function()
         assert.are.equal("简体中文", I18n.translate("Simplified Chinese", nil, settings("zh_CN")))
         assert.are.equal("星级阈值", I18n.translate("Star rating threshold", nil, settings("zh_CN")))
     end)
+
+    it("covers the article browser", function()
+        local zh = settings("zh_CN")
+        assert.are.equal("浏览文章", I18n.translate("Browse articles", nil, zh))
+        assert.are.equal("显示 %1 篇文章", I18n.translate("Show %1 articles", nil, zh))
+        assert.are.equal("%1 篇文章 · 更新于 %2", I18n.translate("%1 articles · updated %2", nil, zh))
+        assert.are.equal(
+            "%1 篇已下载文章 · 离线列表",
+            I18n.translate("%1 downloaded articles · offline list", nil, zh)
+        )
+        assert.are.equal("按标签细分", I18n.translate("Refine by label", nil, zh))
+        assert.are.equal("隐藏同步跳过的内容", I18n.translate("Hide what sync skips", nil, zh))
+        assert.are.equal("%1 · 已隐藏 %2 篇", I18n.translate("%1 · %2 hidden", nil, zh))
+        assert.are.equal("重建文章列表", I18n.translate("Rebuild article list", nil, zh))
+        assert.are.equal(
+            "暂无可浏览的内容。请连接服务器获取文章列表。",
+            I18n.translate("Nothing to browse yet. Connect to the server to fetch the article list.", nil, zh)
+        )
+    end)
+
+    it("covers the browser bucket and sort labels rendered through raw tables", function()
+        local zh = settings("zh_CN")
+        for english, chinese in pairs({
+            ["All"] = "全部",
+            ["Unread"] = "未读",
+            ["Archived"] = "已归档",
+            ["Favorite"] = "收藏",
+            ["Collections"] = "收藏集",
+            ["By label"] = "按标签",
+            ["By source"] = "按来源",
+            ["Newest first"] = "最新优先",
+            ["Oldest first"] = "最早优先",
+            ["Longest read"] = "阅读时长最长",
+            ["Shortest read"] = "阅读时长最短",
+            ["Most read"] = "阅读最多",
+        }) do
+            assert.are.equal(chinese, I18n.translate(english, nil, zh))
+        end
+    end)
+
+    it("covers relative catalog ages", function()
+        local zh = settings("zh_CN")
+        assert.are.equal("刚刚", I18n.translate("just now", nil, zh))
+        assert.are.equal("%1 小时前", I18n.translate("%1 hours ago", nil, zh))
+        assert.are.equal("%1 天前", I18n.translate("%1 days ago", nil, zh))
+        assert.are.equal("%1 分钟", I18n.translate("%1 min", nil, zh))
+    end)
 end)

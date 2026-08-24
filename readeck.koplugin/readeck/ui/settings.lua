@@ -115,7 +115,13 @@ Restart KOReader after editing the config file.]]),
                         text = L("Apply"),
                         callback = function()
                             local myfields = self.settings_dialog:getFields()
-                            self.server_url = myfields[1]:gsub("/*$", "")
+                            local new_url = myfields[1]:gsub("/*$", "")
+                            if new_url ~= self.server_url then
+                                -- Readeck ids are per-server, so a catalog built against
+                                -- the old one is meaningless (and misleading) here.
+                                self:clearCatalog()
+                            end
+                            self.server_url = new_url
                             self.server_info = nil
                             self:saveSettings()
                             if (self.highlight_feature_policy or "auto") == "auto" then

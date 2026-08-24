@@ -42,6 +42,11 @@ function LocalActions.install(Readeck, deps)
         UIManager:forceRePaint()
         UIManager:close(info)
         for _, entry_path in ipairs(candidates) do
+            -- Deliberately no catalog removal here. `remote_article_ids` comes from the
+            -- filtered sync list (one label, unread only, capped at articles_per_sync),
+            -- so "missing from that list" means "not in this sync's scope", not "deleted
+            -- on the server". Removing these from the catalog would erase exactly the
+            -- archived and already-read articles the browser exists to show offline.
             Log:debug("Deleting local file (deleted on server):", entry_path)
             counts.local_removed = counts.local_removed + self:deleteLocalArticle(entry_path)
         end
@@ -231,6 +236,7 @@ function LocalActions.install(Readeck, deps)
         local remote_ok = self:callAPI("PATCH", Api.paths.bookmark(id), headers, bodyJSON, "")
         if remote_ok then
             counts.remote_progress_updated = counts.remote_progress_updated + 1
+            self:catalogPatch(id, { read_progress = math.max(0, math.min(100, Math.round(progress))) })
         else
             counts.failed = counts.failed + 1
         end
@@ -311,7 +317,9 @@ function LocalActions.install(Readeck, deps)
                     ["Authorization"] = "Bearer " .. self.access_token,
                 }
 
-                self:callAPI("PATCH", Api.paths.bookmark(id), headers, bodyJSON, "")
+                if self:callAPI("PATCH", Api.paths.bookmark(id), headers, bodyJSON, "") then
+                    self:catalogAddLabels(id, tags)
+                end
             else
                 Log:debug("No tags to send for", path)
             end
@@ -363,11 +371,15 @@ function LocalActions.install(Readeck, deps)
                 remote_ok = self:callAPI("PATCH", Api.paths.bookmark(id), headers, bodyJSON, "")
                 if remote_ok then
                     counts.remote_archived = counts.remote_archived + 1
+                    self:catalogApplyArchive(id, body)
                 end
             else
                 remote_ok = self:callAPI("DELETE", Api.paths.bookmark(id), nil, "", "")
                 if remote_ok then
                     counts.remote_deleted = counts.remote_deleted + 1
+                    -- The article is gone from the server, so it must leave the browse
+                    -- index too. This is the only place that is true.
+                    self:catalogRemove(id)
                 end
             end
             if remote_ok then

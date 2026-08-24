@@ -40,6 +40,12 @@ function Downloads.install(Readeck, deps)
         if not ok then
             Log:warn("Could not save Readeck article metadata:", local_path, err)
         end
+
+        -- Every download path -- blocking, async, subprocess, and the already-on-disk
+        -- shortcut -- funnels through here, so this is the one place that knows an
+        -- article's bytes and metadata are current. Refreshing the browse catalog from
+        -- the same payload keeps the two from drifting apart between syncs.
+        self:catalogUpsertBookmark(article)
     end
 
     function Readeck:syncReadingProgressFromRemote(local_path, article)

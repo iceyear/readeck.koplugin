@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -23,6 +24,8 @@ STATE = {
     "annotation_patches": [],
     "oauth_clients": [],
     "oauth_token_requests": 0,
+    "sync_requests": [],
+    "sync_rejections": [],
 }
 
 CONFIG = {
@@ -31,6 +34,17 @@ CONFIG = {
 }
 
 ARTICLE_ID = "A1b2C3d4E5f6G7h8I9"
+COLLECTION_ID = "SGq7sJBA9n7rd7z5aahjVu"
+
+
+def is_rfc3339(value):
+    """Whether Go's time binder would accept this as RFC3339. Deliberately strict: the
+    real server rejects the zero time too, so a bare "0" must not slip through."""
+    try:
+        parsed = datetime.strptime(value.replace("Z", "+0000"), "%Y-%m-%dT%H:%M:%S%z")
+    except (ValueError, AttributeError):
+        return False
+    return parsed.year > 1
 
 
 def parse_version(version):
@@ -205,6 +219,91 @@ class MockReadeckHandler(BaseHTTPRequestHandler):
                     }
                 ],
             )
+            return
+        if path == "/api/bookmarks/collections":
+            # The real shape, verbatim. Readeck types the nullable filters as pointers
+            # without omitempty, so an unset one is JSON null rather than absent, and the
+            # unset strings are "" rather than absent. `labels` is one search expression,
+            # not an array. Anything less than this and the client's decoding of `null`
+            # -- which is not nil in KOReader -- goes untested.
+            write_json(
+                self,
+                [
+                    {
+                        "id": COLLECTION_ID,
+                        "name": "Everything",
+                        "href": "http://127.0.0.1/api/collections/%s" % COLLECTION_ID,
+                        "created": "2026-05-06T00:00:00Z",
+                        "updated": "2026-05-06T00:00:00Z",
+                        "labels": "",
+                        "site": "",
+                        "search": "",
+                        "title": "",
+                        "author": "",
+                        "range_start": "",
+                        "range_end": "",
+                        "type": None,
+                        "read_status": None,
+                        "is_archived": None,
+                        "is_marked": None,
+                        "has_labels": None,
+                        "has_errors": None,
+                        "is_loaded": None,
+                        "is_deleted": False,
+                        "is_pinned": False,
+                    },
+                    {
+                        "id": "kZ3mQp7Xr2Nb8vTs5wYcHd",
+                        "name": "Multi word labels",
+                        "href": "http://127.0.0.1/api/collections/kZ3mQp7Xr2Nb8vTs5wYcHd",
+                        "created": "2026-05-06T00:00:00Z",
+                        "updated": "2026-05-06T00:00:00Z",
+                        "labels": '"long read" rust',
+                        "site": "",
+                        "search": "",
+                        "title": "",
+                        "author": "",
+                        "range_start": "",
+                        "range_end": "",
+                        "type": None,
+                        "read_status": None,
+                        "is_archived": True,
+                        "is_marked": None,
+                        "has_labels": None,
+                        "has_errors": None,
+                        "is_loaded": None,
+                        "is_deleted": False,
+                        "is_pinned": False,
+                    },
+                ],
+            )
+            return
+        if path == "/api/bookmarks/sync":
+            # Readeck binds `since` as a time and validates the bound result, so an
+            # unparseable value is a 422 rather than "no filter" -- which is what broke a
+            # first-ever catalog refresh when the client sent `since=0`.
+            raw = parse_qs(parsed.query).get("since", [None])[0]
+            if raw is not None and not is_rfc3339(raw):
+                STATE["sync_rejections"].append(raw)
+                write_json(
+                    self,
+                    {
+                        "is_valid": False,
+                        "errors": None,
+                        "fields": {
+                            "since": {
+                                "is_null": False,
+                                "is_bound": False,
+                                "value": "0001-01-01T00:00:00Z",
+                                "errors": ["invalid value"],
+                            }
+                        },
+                    },
+                    422,
+                )
+                return
+            STATE["sync_requests"].append(raw)
+            write_json(self, [{"id": ARTICLE_ID, "time": "2026-05-06T00:00:00Z", "type": "update"}])
             return
         if path == "/api/bookmarks/%s/article.epub" % ARTICLE_ID:
             body = b"mock epub payload"

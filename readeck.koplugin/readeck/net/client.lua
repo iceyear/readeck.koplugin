@@ -29,7 +29,12 @@ function Client.install(Readeck, deps)
         end
     end
 
-    function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet, retry_auth)
+    -- opts.return_headers makes the call return `value, err, code, resp_headers` so callers
+    -- can read pagination metadata (Total-Count, Total-Pages, Current-Page). Header keys are
+    -- lowercased by socket.http.
+    function Readeck:callAPI(method, apiurl, headers, body, filepath, quiet, retry_auth, opts)
+        opts = opts or {}
+        local want_headers = opts.return_headers
         local sink = {}
         local request = {}
 
@@ -78,6 +83,21 @@ function Client.install(Readeck, deps)
         local code, resp_headers, status = socket.skip(1, http.request(request))
         socketutil:reset_timeout()
 
+        -- Keeps the historical return shapes byte for byte; only appends the response
+        -- headers when the caller explicitly asked for them.
+        local function ret(value, err, err_code)
+            if want_headers then
+                return value, err, err_code or code, resp_headers
+            end
+            if err_code ~= nil then
+                return value, err, err_code
+            end
+            if err ~= nil then
+                return value, err
+            end
+            return value
+        end
+
         if resp_headers then
             Log:debug("Response code:", code, "Status:", status or "nil")
             for k, v in pairs(resp_headers) do
@@ -106,10 +126,10 @@ function Client.install(Readeck, deps)
                 on_oauth_success = oauth_success_callback,
             }) then
                 Log:info("Token refreshed, retrying API call")
-                return self:callAPI(method, apiurl, nil, body, filepath, quiet, true)
+                return self:callAPI(method, apiurl, nil, body, filepath, quiet, true, opts)
             elseif self:isOAuthPollingActive() then
                 Log:info("OAuth authorization flow started after auth failure")
-                return nil, "auth_pending", code
+                return ret(nil, "auth_pending", code)
             else
                 Log:error("Failed to refresh token")
                 if not quiet then
@@ -117,14 +137,14 @@ function Client.install(Readeck, deps)
                         text = L("Authentication failed. Please check your OAuth or API token settings."),
                     }))
                 end
-                return nil, "auth_error", code
+                return ret(nil, "auth_error", code)
             end
         end
 
         if code == 200 or code == 201 or code == 202 or code == 204 then
             if filepath ~= "" then
                 Log:info("File downloaded successfully to", filepath)
-                return true
+                return ret(true)
             else
                 local content = table.concat(sink)
                 Log:debug("Response content length:", #content, "bytes")
@@ -135,12 +155,12 @@ function Client.install(Readeck, deps)
 
                 if code == 204 then
                     Log:debug("Successfully received 204 No Content response")
-                    return true
+                    return ret(true)
                 elseif content ~= "" and (string.sub(content, 1, 1) == "{" or string.sub(content, 1, 1) == "[") then
                     local ok, result = pcall(JSON.decode, content)
                     if ok and result then
                         Log:debug("Successfully parsed JSON response")
-                        return result
+                        return ret(result)
                     else
                         Log:error("Failed to parse JSON:", result or "unknown error")
                         if not quiet then
@@ -151,7 +171,7 @@ function Client.install(Readeck, deps)
                     end
                 elseif content == "" then
                     Log:debug("Empty response with successful status code")
-                    return true
+                    return ret(true)
                 else
                     Log:error("Response is not valid JSON")
                     if not quiet then
@@ -160,7 +180,7 @@ function Client.install(Readeck, deps)
                         }))
                     end
                 end
-                return nil, "json_error"
+                return ret(nil, "json_error")
             end
         else
             local error_content = filepath == "" and table.concat(sink) or ""
@@ -180,7 +200,7 @@ function Client.install(Readeck, deps)
                 }))
             end
             Log:error("Request failed:", status or code, "URL:", request.url)
-            return nil, "http_error", code
+            return ret(nil, "http_error", code)
         end
     end
 end

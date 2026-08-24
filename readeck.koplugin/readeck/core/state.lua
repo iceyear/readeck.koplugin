@@ -86,6 +86,9 @@ function State.install(Readeck, deps)
         assign_if_set(self, settings, "highlight_sync_policy")
         assign_if_set(self, settings, "periodic_sync_enabled")
         assign_if_set(self, settings, "periodic_sync_interval_minutes")
+        assign_if_set(self, settings, "browse_apply_sync_filters")
+        assign_if_set(self, settings, "browse_catalog_max_age_hours")
+        assign_if_set(self, settings, "browse_sort")
         assign_if_set(self, settings, "block_timeout")
         assign_if_set(self, settings, "total_timeout")
         assign_if_set(self, settings, "file_block_timeout")
@@ -148,6 +151,9 @@ function State.install(Readeck, deps)
         self.oauth_prompt_dialog = nil
         self.server_info = nil
         self.server_url = nil
+        -- The catalog is keyed to a server; keeping it across a reset would show the
+        -- previous account's articles to the next one.
+        self:clearCatalog()
         I18n.set_language_override(self.language_override or "")
         self.sort_options = self:buildSortOptions()
         if not self.rd_settings then
