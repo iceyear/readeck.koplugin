@@ -266,7 +266,7 @@ function LocalActions.install(Readeck, deps)
         if self.auto_tags and self.auto_tags ~= "" then
             local tags = {}
             for tag in util.gsplit(self.auto_tags, "[,]+", false) do
-                table.insert(tags, tag:gsub("^%s*(.-)%s*$", "%1"))
+                table.insert(tags, (tag:gsub("^%s*(.-)%s*$", "%1")))
             end
             body.labels = tags
         end
@@ -295,7 +295,7 @@ function LocalActions.install(Readeck, deps)
 
                 local tags = {}
                 for tag in util.gsplit(tags_text, "[,]+", false) do
-                    table.insert(tags, tag:gsub("^%s*(.-)%s*$", "%1"))
+                    table.insert(tags, (tag:gsub("^%s*(.-)%s*$", "%1")))
                 end
 
                 local body = {
