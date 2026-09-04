@@ -1552,6 +1552,85 @@ describe("KOReader smoke", function()
         assert.is_true(instance:shouldSkipDownload(local_path, article))
     end)
 
+    it("sends trimmed review tags without crashing on gsub's second return value", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local article_path = "/tmp/readeck/Tagged [rd-id_abc123].epub"
+        local encoded_body
+
+        package.loaded["docsettings"] = nil
+        package.preload["docsettings"] = function()
+            return {
+                hasSidecarFile = function(_, path)
+                    return path == article_path
+                end,
+                open = function()
+                    return {
+                        readSetting = function(_, key)
+                            if key == "summary" then
+                                return { note = " work , reading " }
+                            end
+                        end,
+                    }
+                end,
+            }
+        end
+        package.loaded["util"] = nil
+        package.preload["util"] = function()
+            return {
+                getSafeFilename = function(title)
+                    return title or "article"
+                end,
+                gsplit = function(text, _pattern)
+                    local index = 1
+                    return function()
+                        if index > #text then
+                            return nil
+                        end
+                        local from, to = text:find(",", index, true)
+                        local piece
+                        if from then
+                            piece = text:sub(index, from - 1)
+                            index = to + 1
+                        else
+                            piece = text:sub(index)
+                            index = #text + 1
+                        end
+                        return piece
+                    end
+                end,
+            }
+        end
+        package.loaded["json"] = nil
+        package.preload["json"] = function()
+            return {
+                encode = function(body)
+                    encoded_body = body
+                    return "{}"
+                end,
+                decode = function()
+                    return {}
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        local instance = setmetatable({
+            directory = "/tmp/readeck",
+            access_token = "token",
+            getArticleID = function()
+                return "abc123"
+            end,
+            callAPI = function()
+                return true
+            end,
+        }, { __index = Readeck })
+
+        instance:addTags(article_path)
+
+        assert.are.same({ "work", "reading" }, encoded_body.add_labels)
+    end)
+
     it("archives completed local files during sync when completion actions are enabled", function()
         package.path = "./readeck.koplugin/?.lua;" .. package.path
         install_koreader_stubs()
