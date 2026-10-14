@@ -6,13 +6,13 @@
 
 #### Added
 
-- Added a `Random` option to **Article selection > Sort articles by**. A fresh seed is generated for each sync so the article order changes every time, matching Readeck's web app behavior.
+- Added a `Random` option to **Article selection > Sort articles by**. It is shown only when the server reports Readeck 0.23.0 or newer (detected from `/api/info`). A fresh seed is generated for each sync so the article order changes every time, matching Readeck's web app behavior.
 
 ### 中文
 
 #### 新增
 
-- 在 **文章选择 > 文章排序** 中新增 **随机** 选项。每次同步都会生成新的随机种子，因此文章顺序每次都会变化，与 Readeck 网页版行为一致。
+- 在 **文章选择 > 文章排序** 中新增 **随机** 选项。仅当服务器报告 Readeck 0.23.0 或更高版本时显示（通过 `/api/info` 探测）。每次同步都会生成新的随机种子，因此文章顺序每次都会变化，与 Readeck 网页版行为一致。
 
 ## v0.1.1 - 2026-05-07
 

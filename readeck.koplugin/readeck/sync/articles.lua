@@ -56,7 +56,8 @@ function Articles.install(Readeck, deps)
         local article_list = {}
         local offset = 0
         local limit = math.min(self.articles_per_sync, 30)
-        local sort_seed = build_sort_seed(self.sort_param)
+        local sort_param = self:getEffectiveSortParam()
+        local sort_seed = build_sort_seed(sort_param)
 
         while #article_list < self.articles_per_sync do
             local articles_url = Api.bookmarks_query({
@@ -65,7 +66,7 @@ function Articles.install(Readeck, deps)
                 is_archived = 0,
                 type = "article",
                 labels = self.filter_tag,
-                sort = self.sort_param,
+                sort = sort_param,
                 seed = sort_seed,
             })
 
@@ -151,12 +152,13 @@ function Articles.install(Readeck, deps)
             return self:fetchArticleListBlockingAsync(done)
         end
 
+        local sort_param = self:getEffectiveSortParam()
         local state = {
             article_list = {},
             offset = 0,
             limit = math.min(self.articles_per_sync, 30),
             retry_auth = false,
-            seed = build_sort_seed(self.sort_param),
+            seed = build_sort_seed(sort_param),
         }
 
         local fetch_next
@@ -172,7 +174,7 @@ function Articles.install(Readeck, deps)
                 is_archived = 0,
                 type = "article",
                 labels = self.filter_tag,
-                sort = self.sort_param,
+                sort = sort_param,
                 seed = state.seed,
             })
 

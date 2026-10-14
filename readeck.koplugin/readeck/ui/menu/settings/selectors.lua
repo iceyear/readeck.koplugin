@@ -105,12 +105,18 @@ function Selectors.install(Readeck, deps)
     end
 
     function Readeck:setSortParam(touchmenu_instance)
+        if type(self.server_info) ~= "table" and not self:isempty(self.server_url) then
+            self:refreshServerInfo(true, true)
+        end
+        self.sort_options = self:buildSortOptions()
+
+        local current = self:getEffectiveSortParam()
         local radio_buttons = {}
 
         for _, opt in ipairs(self.sort_options) do
             local key, value = opt[1], opt[2]
             table.insert(radio_buttons, {
-                { text = value, provider = key, checked = (self.sort_param == key) },
+                { text = value, provider = key, checked = (current == key) },
             })
         end
 

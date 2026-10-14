@@ -62,6 +62,10 @@ function Features.supports_annotation_none_color(info)
     return Features.has_feature(info, "annotation_none_color") == true or Features.version_at_least(info, "0.22.2")
 end
 
+function Features.supports_random_sort(info)
+    return Features.version_at_least(info, "0.23.0")
+end
+
 function Features.highlight_payload_profile(info)
     return {
         notes = Features.supports_annotation_notes(info),

@@ -357,6 +357,9 @@ local function stub_instance(overrides)
         getLogLevelLabel = function()
             return "Info"
         end,
+        getEffectiveSortParam = function(self)
+            return self.sort_param
+        end,
         getArticleID = function()
             return nil
         end,
@@ -598,6 +601,7 @@ describe("KOReader smoke", function()
             filter_tag = "",
             ignore_tags = "",
             server_url = "https://readeck.example",
+            server_info = { version = { canonical = "0.23.1" } },
             sort_param = "random",
         }, { __index = Readeck })
 
