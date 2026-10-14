@@ -122,9 +122,10 @@ function Items.install(Readeck, deps)
             },
             {
                 text_func = function()
-                    local sort_desc = self.sort_param
+                    local current = self:getEffectiveSortParam()
+                    local sort_desc = current
                     for _, opt in ipairs(self.sort_options) do
-                        if opt[1] == self.sort_param then
+                        if opt[1] == current then
                             sort_desc = opt[2]
                             break
                         end

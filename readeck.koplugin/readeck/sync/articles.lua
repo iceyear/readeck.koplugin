@@ -30,6 +30,22 @@ local function response_error(response)
     return tostring(response_code(response) or "network error")
 end
 
+-- Readeck's "random" order accepts an optional seed (0..999999). Reusing one
+-- seed across the paginated requests of a single sync keeps the ordering stable
+-- while giving a fresh shuffle on each sync.
+local function build_sort_seed(sort_param)
+    if sort_param ~= "random" then
+        return nil
+    end
+    local seed = os.time()
+    local ok, socket = pcall(require, "socket")
+    if ok and socket and socket.gettime then
+        seed = seed + math.floor(socket.gettime() * 1000)
+    end
+    math.randomseed(seed)
+    return math.random(0, 999999)
+end
+
 function Articles.install(Readeck, deps)
     local L = deps.L
     local T = deps.T
@@ -40,6 +56,8 @@ function Articles.install(Readeck, deps)
         local article_list = {}
         local offset = 0
         local limit = math.min(self.articles_per_sync, 30)
+        local sort_param = self:getEffectiveSortParam()
+        local sort_seed = build_sort_seed(sort_param)
 
         while #article_list < self.articles_per_sync do
             local articles_url = Api.bookmarks_query({
@@ -48,7 +66,8 @@ function Articles.install(Readeck, deps)
                 is_archived = 0,
                 type = "article",
                 labels = self.filter_tag,
-                sort = self.sort_param,
+                sort = sort_param,
+                seed = sort_seed,
             })
 
             Log:debug("Fetching article list with URL:", articles_url)
@@ -133,11 +152,13 @@ function Articles.install(Readeck, deps)
             return self:fetchArticleListBlockingAsync(done)
         end
 
+        local sort_param = self:getEffectiveSortParam()
         local state = {
             article_list = {},
             offset = 0,
             limit = math.min(self.articles_per_sync, 30),
             retry_auth = false,
+            seed = build_sort_seed(sort_param),
         }
 
         local fetch_next
@@ -153,7 +174,8 @@ function Articles.install(Readeck, deps)
                 is_archived = 0,
                 type = "article",
                 labels = self.filter_tag,
-                sort = self.sort_param,
+                sort = sort_param,
+                seed = state.seed,
             })
 
             Log:debug("Fetching article list with async URL:", articles_url)

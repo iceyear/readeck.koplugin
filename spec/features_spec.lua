@@ -19,6 +19,13 @@ describe("readeck.core.features", function()
         assert.is_false(Features.version_at_least({ version = { canonical = "0.22.1" } }, "0.22.2"))
     end)
 
+    it("detects random sort support by server version", function()
+        assert.is_true(Features.supports_random_sort({ version = { canonical = "0.23.0" } }))
+        assert.is_true(Features.supports_random_sort({ version = { canonical = "0.24.1" } }))
+        assert.is_false(Features.supports_random_sort({ version = { canonical = "0.22.2" } }))
+        assert.is_false(Features.supports_random_sort(nil))
+    end)
+
     it("builds a highlight payload profile from server capabilities", function()
         assert.are.same(
             { notes = true, none_color = true },

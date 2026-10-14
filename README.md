@@ -36,7 +36,7 @@ This is a cozy project, and I hope it can remain one — with the community’s 
 
 * 🔄 **Sync & Download**: Download articles from your Readeck server to a dedicated folder on your KOReader device.
 * 🏷️ **Tag Filtering**: Only download articles with a specific tag, ignore articles with certain tags, and auto-add tags to newly created bookmarks.
-* ↕️ **Sorting**: Sort server articles by added/published date, duration, site name, or title.
+* ↕️ **Sorting**: Sort server articles by added/published date, duration, site name, title, or random order (random requires Readeck 0.23.0+).
 * 🗄️ **Completion Actions**: Optionally archive or delete finished/100%-read articles in Readeck, and remove local files only after the server action succeeds.
 * 🧾 **History Cleanup**: Optionally remove finished/fully-read Readeck documents from KOReader history.
 * 🌐 **Add to Readeck (with Queue)**: Add links from KOReader; if offline, links are stored in a queue and retried next time you’re online.
@@ -153,7 +153,7 @@ During sync, the plugin can send KOReader's local reading progress below 100% ba
 
 * **Download folder**: Choose the KOReader folder used for downloaded articles
 * **Only download articles with tag**: Only download entries with a specific label
-* **Sort articles by**: Choose the server-side ordering (added/published/duration/site/title)
+* **Sort articles by**: Choose the server-side ordering (added/published/duration/site/title/random)
 * **Tags to ignore**: Skip entries containing any of the specified tags
 * **Tags to add to new articles**: Auto-label newly added bookmarks (including links added from KOReader)
 

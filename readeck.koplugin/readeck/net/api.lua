@@ -36,7 +36,7 @@ Api.paths = {
 
 function Api.bookmarks_query(params)
     params = params or {}
-    local query = build_query(params, { "limit", "offset", "is_archived", "type", "labels", "sort" })
+    local query = build_query(params, { "limit", "offset", "is_archived", "type", "labels", "sort", "seed" })
     if query == "" then
         return Api.paths.bookmarks
     end

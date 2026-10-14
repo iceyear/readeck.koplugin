@@ -1,5 +1,6 @@
 local Defaults = require("readeck.core.defaults")
 local Dispatcher = require("dispatcher")
+local Features = require("readeck.core.features")
 local I18n = require("readeck.i18n")
 
 local State = {}
@@ -40,7 +41,7 @@ function State.install(Readeck, deps)
     end
 
     function Readeck:buildSortOptions()
-        return {
+        local options = {
             { "created", L("Added, oldest first") },
             { "-created", L("Added, most recent first") },
             { "published", L("Published, oldest first") },
@@ -52,6 +53,19 @@ function State.install(Readeck, deps)
             { "title", L("Title, A to Z") },
             { "-title", L("Title, Z to A") },
         }
+        -- Random ordering was added in Readeck 0.23.0; hide it on older servers
+        -- and while the server version is still unknown.
+        if Features.supports_random_sort(self.server_info) then
+            table.insert(options, { "random", L("Random") })
+        end
+        return options
+    end
+
+    function Readeck:getEffectiveSortParam()
+        if self.sort_param == "random" and not Features.supports_random_sort(self.server_info) then
+            return Defaults.values.sort_param
+        end
+        return self.sort_param
     end
 
     function Readeck:loadSettingsIntoState(settings)
@@ -71,6 +85,9 @@ function State.install(Readeck, deps)
         assign_if_set(self, settings, "send_review_as_tags")
         assign_if_set(self, settings, "filter_tag")
         assign_if_set(self, settings, "sort_param")
+        if self.sort_param == "random" and not Features.supports_random_sort(self.server_info) then
+            self.sort_param = Defaults.values.sort_param
+        end
         assign_if_set(self, settings, "ignore_tags")
         assign_if_set(self, settings, "auto_tags")
         assign_if_set(self, settings, "articles_per_sync")

@@ -202,6 +202,7 @@ Downloads to folder: %1]] ] = [[Readeck 是一个开源稍后读服务。此插�
     ["Site name, Z to A"] = "站点名称，Z 到 A",
     ["Title, A to Z"] = "标题，A 到 Z",
     ["Title, Z to A"] = "标题，Z 到 A",
+    ["Random"] = "随机",
     ["Only download articles with tag: %1"] = "只下载带有此标签的文章：%1",
     ["Sort articles by"] = "文章排序",
     ["Sort articles by: %1"] = "文章排序：%1",
