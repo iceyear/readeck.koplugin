@@ -63,6 +63,7 @@ describe("readeck.i18n", function()
             "添加时间，最新优先",
             I18n.translate("Added, most recent first", nil, settings("zh_CN"))
         )
+        assert.are.equal("随机", I18n.translate("Random", nil, settings("zh_CN")))
         local like_label = I18n.translate("Like entries in Readeck: %1", nil, settings("zh_CN"))
             :gsub("%%1", "已禁用")
         assert.are.equal("在 Readeck 中喜欢条目：已禁用", like_label)

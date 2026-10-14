@@ -548,6 +548,66 @@ describe("KOReader smoke", function()
         assert.are.equal("Bearer token", request_headers.Authorization)
     end)
 
+    it("adds a per-sync random seed when sorting articles randomly", function()
+        package.path = "./readeck.koplugin/?.lua;" .. package.path
+        install_koreader_stubs()
+        local request_url
+
+        package.loaded["json"] = nil
+        package.preload["json"] = function()
+            return {
+                encode = function()
+                    return "{}"
+                end,
+                decode = function()
+                    return {
+                        { id = "article-a", labels = {} },
+                        { id = "article-b", labels = {} },
+                    }
+                end,
+            }
+        end
+        package.loaded.httpclient = nil
+        package.preload.httpclient = function()
+            return {
+                new = function()
+                    return {
+                        request = function(_, request, callback)
+                            request_url = request.url
+                            local headers = {
+                                values = {},
+                                add = function(self, key, value)
+                                    self.values[key] = value
+                                end,
+                            }
+                            request.on_headers(headers)
+                            callback({ code = 200, body = "[]" })
+                        end,
+                    }
+                end,
+            }
+        end
+
+        local Readeck = dofile("readeck.koplugin/main.lua")
+        require("ui/uimanager").looper = {
+            add_callback = function() end,
+        }
+        local instance = setmetatable({
+            access_token = "token",
+            articles_per_sync = 2,
+            filter_tag = "",
+            ignore_tags = "",
+            server_url = "https://readeck.example",
+            sort_param = "random",
+        }, { __index = Readeck })
+
+        instance:getArticleListAsync(function() end)
+
+        local base = "https://readeck.example/api/bookmarks?limit=2&offset=0&is_archived=0&type=article&sort=random"
+        assert.are.equal(base .. "&seed=", request_url:sub(1, #base + #"&seed="))
+        assert.is_truthy(request_url:match("&seed=%d+$"))
+    end)
+
     it("falls back to blocking article list fetch when KOReader async HTTP cannot start", function()
         package.path = "./readeck.koplugin/?.lua;" .. package.path
         install_koreader_stubs()

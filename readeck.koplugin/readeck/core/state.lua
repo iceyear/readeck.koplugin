@@ -51,6 +51,7 @@ function State.install(Readeck, deps)
             { "-site", L("Site name, Z to A") },
             { "title", L("Title, A to Z") },
             { "-title", L("Title, Z to A") },
+            { "random", L("Random") },
         }
     end
 

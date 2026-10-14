@@ -17,6 +17,20 @@ describe("readeck.net.api", function()
         )
     end)
 
+    it("adds a random sort seed when provided", function()
+        assert.are.equal(
+            "/api/bookmarks?limit=30&offset=0&is_archived=0&type=article&sort=random&seed=123456",
+            Api.bookmarks_query({
+                limit = 30,
+                offset = 0,
+                is_archived = 0,
+                type = "article",
+                sort = "random",
+                seed = 123456,
+            })
+        )
+    end)
+
     it("can be tested with a mock Readeck transport", function()
         local requests = {}
         local client = Api.new(function(request)
