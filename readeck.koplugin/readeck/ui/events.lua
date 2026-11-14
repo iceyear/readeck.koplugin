@@ -25,14 +25,16 @@ function Events.install(Readeck, deps)
         end
     end
 
-    function Readeck:onAddReadeckArticle(article_url)
+    --- Adds an article and tells the user how it went.
+    -- @treturn string "queued", "added", "auth_pending" or "error"
+    function Readeck:addArticleWithFeedback(article_url)
         if not NetworkMgr:isOnline() then
             self:addToDownloadQueue(article_url)
             UIManager:show(InfoMessage:new({
                 text = T(L("Article added to download queue:\n%1"), BD.url(article_url)),
                 timeout = 1,
             }))
-            return
+            return "queued"
         end
 
         local readeck_result, add_err = self:addArticle(article_url)
@@ -40,16 +42,23 @@ function Events.install(Readeck, deps)
             UIManager:show(InfoMessage:new({
                 text = T(L("Article added to Readeck:\n%1"), BD.url(article_url)),
             }))
+            return "added"
         elseif add_err == "auth_pending" then
             UIManager:show(InfoMessage:new({
                 text = L("OAuth authorization started. Finish login and the article will be retried."),
             }))
-        else
-            UIManager:show(InfoMessage:new({
-                text = T(L("Error adding link to Readeck:\n%1"), BD.url(article_url)),
-            }))
+            return "auth_pending"
         end
+        UIManager:show(InfoMessage:new({
+            text = T(L("Error adding link to Readeck:\n%1"), BD.url(article_url)),
+        }))
+        return "error"
+    end
 
+    function Readeck:onAddReadeckArticle(article_url)
+        if self:addArticleWithFeedback(article_url) == "queued" then
+            return
+        end
         return true
     end
 

@@ -4,3 +4,4 @@ __pycache__/
 *$py.class
 build/
 dist/
+*.tar.gz

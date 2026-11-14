@@ -23,6 +23,7 @@ local SettingsStorage = require("readeck.storage.settings")
 local SettingsUI = require("readeck.ui.settings")
 local State = require("readeck.core.state")
 local StatusMessages = require("readeck.ui.status_messages")
+local Wikipedia = require("readeck.ui.wikipedia")
 
 local T = FFIUtil.template
 local L = I18n.with_gettext(_, function()
@@ -64,6 +65,7 @@ AnnotationExport.install(Readeck, deps)
 Menu.install(Readeck, deps)
 SettingsUI.install(Readeck, deps)
 Events.install(Readeck, deps)
+Wikipedia.install(Readeck, deps)
 State.install(Readeck, deps)
 
 return Readeck
