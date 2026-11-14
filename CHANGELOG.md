@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### English
+
+#### Added
+
+- Added a **Readeck** button to KOReader's Wikipedia lookup popup, in the same row as *Add to vocabulary builder*. It saves the article to Readeck (or queues it when offline) and shows a ✔ once added. Requires KOReader v2026.07 or newer; the full-article view is unchanged.
+
+### 中文
+
+#### 新增
+
+- 在 KOReader 的维基百科查询弹窗中新增 **Readeck** 按钮，与“添加到生词本”位于同一行。点击后会把条目保存到 Readeck（离线时加入队列），添加成功后显示 ✔。需要 KOReader v2026.07 或更新版本；完整条目视图保持不变。
+
 ## v0.1.1 - 2026-05-07
 
 Source: https://github.com/iceyear/readeck.koplugin  

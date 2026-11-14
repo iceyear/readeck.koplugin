@@ -183,6 +183,7 @@ function State.install(Readeck, deps)
         self:loadSettingsIntoState(settings)
         load_dateparser(self)
         self:registerExternalLinkHandler()
+        self:registerWikipediaButton()
 
         if self:migrateSettingsIfNeeded(settings) then
             self:saveSettings()

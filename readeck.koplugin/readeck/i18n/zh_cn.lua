@@ -260,6 +260,7 @@ More details: https://readeck.org]] ] = [[Readeck for KOReader
     ["Configure your Readeck server URL.\n\nAuthentication options are available in:\nSettings > Authentication\n\nNote: For the Server URL, provide the base URL without the /api path (e.g., http://example.com).\n\nRestart KOReader after editing the config file."] = "配置 Readeck 服务器 URL。\n\n认证选项位于：\n设置 > 认证\n\n注意：服务器 URL 请填写不含 /api 路径的基础 URL（例如 http://example.com）。\n\n编辑配置文件后请重启 KOReader。",
     ["Number of articles"] = "文章数量",
     ["Article added to Readeck:\n%1"] = "文章已添加到 Readeck：\n%1",
+    ["Already added to Readeck:\n%1"] = "已添加到 Readeck：\n%1",
     ["Article added to download queue:\n%1"] = "文章已添加到下载队列：\n%1",
     ["Error adding link to Readeck:\n%1"] = "添加链接到 Readeck 时出错：\n%1",
     ["Add to Readeck"] = "添加到 Readeck",

@@ -40,6 +40,7 @@ This is a cozy project, and I hope it can remain one — with the community’s 
 * 🗄️ **Completion Actions**: Optionally archive or delete finished/100%-read articles in Readeck, and remove local files only after the server action succeeds.
 * 🧾 **History Cleanup**: Optionally remove finished/fully-read Readeck documents from KOReader history.
 * 🌐 **Add to Readeck (with Queue)**: Add links from KOReader; if offline, links are stored in a queue and retried next time you’re online.
+* 📖 **Wikipedia → Readeck**: A **Readeck** button in KOReader's Wikipedia lookup popup (next to *Add to vocabulary builder*) saves the article to Readeck and shows a ✔ once added. Requires KOReader v2026.07 or newer.
 * 📝 **Review → Tags**: Write comma-separated tags in the **Review** field and send them back to Readeck as labels.
 * ⭐ **Star / Like Sync**: Optionally mark entries as liked on Readeck based on your KOReader star rating threshold, and/or label entries with their star rating (e.g. `3-star`).
 * 📊 **Reading Progress Sync (beta)**: Sync KOReader reading progress below 100% back to Readeck, and apply newer incomplete Readeck progress to local sidecars. Disabled by default.
